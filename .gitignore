@@ -1,0 +1,14 @@
+reference/
+pipa-fedora-support/
+sm8250-rpms/
+images/
+.mkosi*
+mkosi.rootfs/
+*.img
+*.zip
+*.tar.gz
+*.tar.zst
+*.pkg.tar.zst
+*.pkg.tar.xz
+pkgbuilds/*/src/
+pkgbuilds/*/pkg/

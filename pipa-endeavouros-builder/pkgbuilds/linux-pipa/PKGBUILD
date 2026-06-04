@@ -1,0 +1,70 @@
+pkgbase=linux-pipa
+pkgname=(linux-pipa linux-pipa-headers)
+_srcname=linux
+_commit=2961533bc9151a4fc14727c851ac6a08e35545d0
+pkgver=6.15.8
+pkgrel=15
+pkgdesc='Linux kernel for Xiaomi Pad 6 (Pipa)'
+arch=('aarch64')
+url="https://github.com/pipa-mainline/linux"
+license=('GPL2')
+makedepends=(
+  'bc' 'bison' 'cpio' 'flex' 'kmod' 'pahole' 'python'
+  'tar' 'xz' 'rsync'
+)
+options=('!strip')
+source=(
+  "linux-${_commit}.tar.gz::https://github.com/pipa-mainline/linux/archive/${_commit}.tar.gz"
+  'pipa.config'
+  'add-touchpad-button-event.patch'
+)
+sha256sums=('SKIP' 'SKIP' 'SKIP')
+
+prepare() {
+  cd $_srcname-${_commit}
+
+  patch -p1 < ../add-touchpad-button-event.patch
+  cp ../pipa.config .config
+  
+  make EXTRAVERSION="-${pkgrel}-pipa" olddefconfig
+}
+
+build() {
+  cd $_srcname-${_commit}
+  make EXTRAVERSION="-${pkgrel}-pipa" -j$(nproc) Image.gz modules dtbs
+}
+
+package_linux-pipa() {
+  pkgdesc="The Linux kernel and modules for Xiaomi Pad 6"
+  depends=('coreutils' 'kmod')
+  provides=('linux')
+
+  cd $_srcname-${_commit}
+  
+  local kernver="$(make EXTRAVERSION="-${pkgrel}-pipa" kernelrelease)"
+
+  mkdir -p "$pkgdir/boot"
+  cp arch/arm64/boot/Image.gz "$pkgdir/boot/vmlinuz-$kernver"
+  cp System.map "$pkgdir/boot/System.map-$kernver"
+  cp .config "$pkgdir/boot/config-$kernver"
+
+  make EXTRAVERSION="-${pkgrel}-pipa" INSTALL_MOD_PATH="$pkgdir/usr" modules_install
+  
+  mkdir -p "$pkgdir/usr/lib/modules/$kernver/devicetree"
+  cp arch/arm64/boot/dts/qcom/sm8250-xiaomi-pipa.dtb "$pkgdir/usr/lib/modules/$kernver/devicetree/"
+  ln -s devicetree "$pkgdir/usr/lib/modules/$kernver/dtb"
+  cp arch/arm64/boot/Image.gz "$pkgdir/usr/lib/modules/$kernver/vmlinuz"
+  
+  rm -f "$pkgdir/usr/lib/modules/$kernver/build"
+  rm -f "$pkgdir/usr/lib/modules/$kernver/source"
+}
+
+package_linux-pipa-headers() {
+  pkgdesc="Header files and scripts for building modules for Linux kernel"
+  provides=('linux-headers')
+  
+  cd $_srcname-${_commit}
+  local kernver="$(make EXTRAVERSION="-${pkgrel}-pipa" kernelrelease)"
+  
+  make EXTRAVERSION="-${pkgrel}-pipa" INSTALL_HDR_PATH="$pkgdir/usr" headers_install
+}

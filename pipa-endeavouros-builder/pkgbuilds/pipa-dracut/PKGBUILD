@@ -1,0 +1,13 @@
+pkgname=pipa-dracut
+pkgver=1.1
+pkgrel=2
+pkgdesc="Dracut modules for the Xiaomi Pad 6"
+arch=('any')
+license=('GPL2')
+depends=('xiaomi-pipa-firmware' 'dracut')
+source=('module-setup.sh')
+sha256sums=('SKIP')
+
+package() {
+  install -Dm755 module-setup.sh "$pkgdir/usr/lib/dracut/modules.d/90nvtfw/module-setup.sh"
+}

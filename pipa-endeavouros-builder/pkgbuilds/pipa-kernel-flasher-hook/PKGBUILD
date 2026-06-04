@@ -1,0 +1,13 @@
+pkgname=pipa-kernel-flasher-hook
+pkgver=1.2
+pkgrel=1
+pkgdesc='Kernel flasher hook for the Xiaomi Pad 6'
+arch=('any')
+license=('MIT')
+depends=('android-tools' 'qbootctl' 'dracut' 'systemd')
+source=('99-android-boot.install')
+sha256sums=('SKIP')
+
+package() {
+  install -Dm755 99-android-boot.install "$pkgdir/usr/lib/kernel/install.d/99-android-boot.install"
+}

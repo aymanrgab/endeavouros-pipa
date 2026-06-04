@@ -1,0 +1,14 @@
+pkgname=alsa-ucm-conf-sm8250
+pkgver=1.0
+pkgrel=1
+pkgdesc="ALSA Use Case Manager configuration for sm8250/Xiaomi Pad 6"
+arch=('any')
+license=('MIT')
+depends=('alsa-ucm-conf')
+source=('HiFi_pipa.conf' 'Xiaomi Pad 6.conf')
+sha256sums=('SKIP' 'SKIP')
+
+package() {
+  install -Dm644 "Xiaomi Pad 6.conf" "$pkgdir/usr/share/alsa/ucm2/conf.d/sm8250/Xiaomi Pad 6.conf"
+  install -Dm644 "HiFi_pipa.conf" "$pkgdir/usr/share/alsa/ucm2/Qualcomm/sm8250/HiFi_pipa.conf"
+}

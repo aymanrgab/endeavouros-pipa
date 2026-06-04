@@ -1,0 +1,21 @@
+pkgname=qbootctl
+pkgver=1.1.2
+pkgrel=1
+pkgdesc="Qualcomm A/B boot control utility"
+arch=('x86_64' 'aarch64')
+url="https://github.com/andersson/qbootctl"
+license=('BSD')
+depends=('glibc')
+makedepends=('make' 'gcc')
+source=("$pkgname-$pkgver.tar.gz::https://github.com/andersson/qbootctl/archive/refs/tags/v${pkgver}.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+  cd "$pkgname-$pkgver"
+  make
+}
+
+package() {
+  cd "$pkgname-$pkgver"
+  make DESTDIR="$pkgdir" PREFIX="/usr" install
+}
