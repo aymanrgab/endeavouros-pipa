@@ -1,8 +1,11 @@
 FROM menci/archlinuxarm:base-devel
 
 # Initialize keyring and install dependencies for building and image creation
+# We remove /etc/resolv.conf and /etc/hosts checks during pacman installation
+# as Docker mounts these as read-only, which confuses pacman space checks.
 RUN pacman-key --init && \
     pacman-key --populate archlinuxarm && \
+    sed -i 's/CheckSpace/#CheckSpace/g' /etc/pacman.conf && \
     pacman -Sy --noconfirm archlinuxarm-keyring && \
     pacman -Su --noconfirm && \
     pacman -S --noconfirm \
@@ -10,7 +13,8 @@ RUN pacman-key --init && \
     qemu-user-static qemu-user-static-binfmt \
     arch-install-scripts e2fsprogs dosfstools zip unzip \
     bc bison flex cpio kmod python tar xz meson ninja cmake \
-    glib2 libgudev polkit libqmi protobuf-c dracut android-tools
+    glib2 libgudev polkit libqmi protobuf-c dracut android-tools && \
+    sed -i 's/#CheckSpace/CheckSpace/g' /etc/pacman.conf
 
 # Set up a non-root user for makepkg
 RUN useradd -m -G wheel builder && \
