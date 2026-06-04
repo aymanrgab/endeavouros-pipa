@@ -34,8 +34,11 @@ If you wish to build the images locally, you can do so using Docker on an ARM64 
 
 The output ZIP file(s) will be placed in the `images/` directory. Each build archive currently contains:
 
-- `root.img`: the EndeavourOS root filesystem image
 - `silicium.img`: the Mu-Silicium boot image for Xiaomi Pad 6 / Pipa
+- `endeavouros_esp.raw`: the EFI system partition image used by Mu-Silicium/UEFI
+- `endeavouros_boot.raw`: the Linux `/boot` partition image containing kernel, initramfs, and GRUB config
+- `endeavouros_rootfs.raw`: the EndeavourOS root filesystem image
+- `flash.sh`: a helper script showing the expected fastboot flashing order
 
 The builder uses a pacstrap-based rootfs flow inspired by [endeavouros-arm/plasma-image](https://github.com/endeavouros-arm/plasma-image), while the boot image artifact is sourced from the Mu-Silicium release used by [pocketblue](https://github.com/pocketblue/pocketblue).
 
@@ -43,9 +46,11 @@ The builder uses a pacstrap-based rootfs flow inspired by [endeavouros-arm/plasm
 
 1. Ensure your device bootloader is unlocked.
 2. Flash the generated `silicium.img` to the device boot slot(s).
-3. Flash the generated `root.img` to the target root/userdata partition according to your partitioning layout.
-4. Erase `dtbo_ab` if your current setup requires it before first boot.
-5. Reboot the device.
+3. Flash `endeavouros_esp.raw` to the EFI partition used by your current Pipa flashing layout.
+4. Flash `endeavouros_boot.raw` to the Linux `/boot` partition used by your current Pipa flashing layout.
+5. Flash `endeavouros_rootfs.raw` to the root/userdata partition.
+6. Erase `dtbo_ab` if your current setup requires it before first boot.
+7. Reboot the device.
 
 The exact flashing sequence should follow the same Pipa boot model used by pocketblue, with Mu-Silicium providing the Android boot image and the distribution-specific root filesystem provided separately.
 

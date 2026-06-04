@@ -12,9 +12,9 @@ RUN pacman-key --init && \
     pacman -Su --noconfirm && \
     pacman -S --noconfirm \
     git sudo wget rsync \
-    arch-install-scripts e2fsprogs dosfstools zip unzip \
+    arch-install-scripts e2fsprogs dosfstools mtools zip unzip \
     bc bison flex cpio kmod python tar xz meson ninja cmake \
-    glib2 libgudev polkit libqmi protobuf-c dracut android-tools
+    glib2 libgudev polkit libqmi protobuf-c dracut android-tools grub
 
 # Set up a non-root user for makepkg
 RUN useradd -m -G wheel builder && \
