@@ -53,10 +53,11 @@ Server = https://mirror.moson.org/endeavouros/repo/\$repo/\$arch
 EOF
 
 BASE_PACKAGES=(
-    base base-devel sudo nano vim git wget rsync openssh
+    base base-devel sudo nano vim git wget rsync openssh lsb-release
     networkmanager bluez bluez-utils iwd
-    pipewire pipewire-alsa pipewire-pulse wireplumber
+    pipewire pipewire-alsa pipewire-pulse pipewire-jack wireplumber
     power-profiles-daemon modemmanager xdg-user-dirs
+    iptables noto-fonts
     endeavouros-keyring endeavouros-mirrorlist endeavouros-theming
     eos-hooks eos-update-notifier welcome
     pipa-metapkg
@@ -64,11 +65,19 @@ BASE_PACKAGES=(
 
 case "$DE_NAME" in
     plasma)
-        DESKTOP_PACKAGES=(plasma konsole dolphin sddm firefox)
+        DESKTOP_PACKAGES=(
+            plasma-desktop plasma-nm plasma-pa systemsettings
+            konsole dolphin sddm firefox xdg-desktop-portal-kde
+        )
         DISPLAY_MANAGER="sddm"
         ;;
     gnome)
-        DESKTOP_PACKAGES=(gnome gnome-tweaks gdm firefox)
+        DESKTOP_PACKAGES=(
+            gdm gnome-shell gnome-session gnome-control-center
+            gnome-settings-daemon gnome-keyring gnome-terminal
+            gnome-tweaks nautilus gvfs xdg-desktop-portal-gnome
+            firefox
+        )
         DISPLAY_MANAGER="gdm"
         ;;
     *)

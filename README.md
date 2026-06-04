@@ -2,6 +2,8 @@
 
 This project contains the build infrastructure and packages to port EndeavourOS to the Xiaomi Pad 6 (Pipa) device.
 
+The current boot flow uses the upstream [Mu-Silicium](https://github.com/onesaladleaf/Mu-Silicium) Pipa boot image release together with a custom Pipa-enabled EndeavourOS root filesystem.
+
 ## Automated Builds via CircleCI
 
 This repository is configured with a CircleCI pipeline ([config.yml](file:///Users/ayman/Documents/trae_projects/endavouros_pipa/.circleci/config.yml)) that builds EndeavourOS images on native ARM hardware.
@@ -30,15 +32,23 @@ If you wish to build the images locally, you can do so using Docker on an ARM64 
    docker run --privileged -v "$(pwd)/images:/build/images" -v "/dev:/dev" pipa-endeavouros-builder gnome
    ```
 
-The output ZIP file(s) containing `root.img` and `boot.img` will be placed in the `images/` directory.
+The output ZIP file(s) will be placed in the `images/` directory. Each build archive currently contains:
+
+- `root.img`: the EndeavourOS root filesystem image
+- `silicium.img`: the Mu-Silicium boot image for Xiaomi Pad 6 / Pipa
+
+The builder uses a pacstrap-based rootfs flow inspired by [endeavouros-arm/plasma-image](https://github.com/endeavouros-arm/plasma-image), while the boot image artifact is sourced from the Mu-Silicium release used by [pocketblue](https://github.com/pocketblue/pocketblue).
 
 ## Flashing Instructions
 
 1. Ensure your device bootloader is unlocked.
-2. Flash the generated `boot.img` to your device's boot partition.
-3. Flash the generated `root.img` to your device's userdata/system partition (depending on your partitioning setup).
-4. Reboot the device.
+2. Flash the generated `silicium.img` to the device boot slot(s).
+3. Flash the generated `root.img` to the target root/userdata partition according to your partitioning layout.
+4. Erase `dtbo_ab` if your current setup requires it before first boot.
+5. Reboot the device.
+
+The exact flashing sequence should follow the same Pipa boot model used by pocketblue, with Mu-Silicium providing the Android boot image and the distribution-specific root filesystem provided separately.
 
 ## Acknowledgements
 
-This port is heavily based on the excellent work done in the [pipa-fedora-builder-43](https://github.com/rr1111/pipa-fedora-builder-43/) and [pipa-fedora-support](https://github.com/timoxa0/pipa-fedora-support) repositories.
+This port is heavily based on the excellent work done in the [pipa-fedora-builder-43](https://github.com/rr1111/pipa-fedora-builder-43/) and [pipa-fedora-support](https://github.com/timoxa0/pipa-fedora-support) repositories, as well as the EndeavourOS ARM [plasma-image](https://github.com/endeavouros-arm/plasma-image), [Mu-Silicium](https://github.com/onesaladleaf/Mu-Silicium), and [pocketblue](https://github.com/pocketblue/pocketblue) projects.
