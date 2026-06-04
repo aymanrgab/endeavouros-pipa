@@ -10,7 +10,7 @@ RUN pacman-key --init && \
     pacman -Su --noconfirm && \
     pacman -S --noconfirm \
     git sudo wget rsync bsdtar \
-    qemu-user-static qemu-user-static-binfmt \
+    qemu-user-static \
     arch-install-scripts e2fsprogs dosfstools zip unzip \
     bc bison flex cpio kmod python tar xz meson ninja cmake \
     glib2 libgudev polkit libqmi protobuf-c dracut android-tools && \
