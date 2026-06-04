@@ -37,9 +37,10 @@ mkdir -p "$ROOTFS_DIR/repo"
 cp /repo/*.pkg.tar.zst "$ROOTFS_DIR/repo/" || echo "No local packages found. Make sure to run build-packages.sh first."
 cp /repo/pipa.db* "$ROOTFS_DIR/repo/" || true
 
-cat <<EOF >> "$ROOTFS_DIR/etc/pacman.conf"
-DisableSandbox
+sed -i '/^DisableSandbox$/d' "$ROOTFS_DIR/etc/pacman.conf"
+sed -i '/^\[options\]$/a DisableSandbox' "$ROOTFS_DIR/etc/pacman.conf"
 
+cat <<EOF >> "$ROOTFS_DIR/etc/pacman.conf"
 [pipa]
 SigLevel = Optional TrustAll
 Server = file:///repo

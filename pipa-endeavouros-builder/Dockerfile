@@ -1,20 +1,20 @@
 FROM menci/archlinuxarm:base-devel
 
-# Initialize keyring and install dependencies for building and image creation
-# We remove /etc/resolv.conf and /etc/hosts checks during pacman installation
-# as Docker mounts these as read-only, which confuses pacman space checks.
+# Initialize keyring and install dependencies for building and image creation.
+# Docker CI lacks the kernel features pacman uses for sandboxing, so the option
+# must live inside the [options] section or pacman will ignore it.
 RUN pacman-key --init && \
     pacman-key --populate archlinuxarm && \
-    sed -i 's/CheckSpace/#CheckSpace/g' /etc/pacman.conf && \
-    sed -i 's/DisableSandbox//g' /etc/pacman.conf && echo "DisableSandbox" >> /etc/pacman.conf && \
+    sed -i '/^CheckSpace$/s/^/#/' /etc/pacman.conf && \
+    sed -i '/^DisableSandbox$/d' /etc/pacman.conf && \
+    sed -i '/^\[options\]$/a DisableSandbox' /etc/pacman.conf && \
     pacman -Sy --noconfirm archlinuxarm-keyring && \
     pacman -Su --noconfirm && \
     pacman -S --noconfirm \
     git sudo wget rsync \
     arch-install-scripts e2fsprogs dosfstools zip unzip \
     bc bison flex cpio kmod python tar xz meson ninja cmake \
-    glib2 libgudev polkit libqmi protobuf-c dracut android-tools && \
-    sed -i 's/#CheckSpace/CheckSpace/g' /etc/pacman.conf
+    glib2 libgudev polkit libqmi protobuf-c dracut android-tools
 
 # Set up a non-root user for makepkg
 RUN useradd -m -G wheel builder && \
