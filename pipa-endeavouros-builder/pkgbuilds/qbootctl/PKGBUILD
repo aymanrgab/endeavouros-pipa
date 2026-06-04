@@ -1,21 +1,22 @@
 pkgname=qbootctl
-pkgver=1.1.2
+pkgver=0.2.2
 pkgrel=1
 pkgdesc="Qualcomm A/B boot control utility"
 arch=('x86_64' 'aarch64')
-url="https://github.com/andersson/qbootctl"
-license=('BSD')
+url="https://github.com/linux-msm/qbootctl"
+license=('GPL3')
 depends=('glibc')
-makedepends=('make' 'gcc')
-source=("$pkgname-$pkgver.tar.gz::https://github.com/andersson/qbootctl/archive/refs/tags/v${pkgver}.tar.gz")
+makedepends=('meson' 'ninja' 'gcc')
+source=("$pkgname-$pkgver.tar.gz::https://github.com/linux-msm/qbootctl/archive/refs/tags/${pkgver}.tar.gz")
 sha256sums=('SKIP')
 
 build() {
   cd "$pkgname-$pkgver"
-  make
+  meson setup build --prefix=/usr
+  meson compile -C build
 }
 
 package() {
   cd "$pkgname-$pkgver"
-  make DESTDIR="$pkgdir" PREFIX="/usr" install
+  DESTDIR="$pkgdir" meson install -C build
 }
