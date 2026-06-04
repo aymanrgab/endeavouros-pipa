@@ -20,31 +20,28 @@ PKGS=(
 )
 
 # Ensure base-devel is installed
-sudo pacman -Syu --needed --noconfirm base-devel git sudo
+pacman -Syu --needed --noconfirm base-devel git sudo
 
 # Create a local repo
 REPO_DIR="/repo"
-sudo mkdir -p $REPO_DIR
-sudo chown -R builder:builder $REPO_DIR
+mkdir -p "$REPO_DIR"
+chown -R builder:builder "$REPO_DIR"
 
 for pkg in "${PKGS[@]}"; do
   echo "Building $pkg..."
-  cd "pkgbuilds/$pkg"
-  
-  # Install missing dependencies (using pacman for standard repos)
-  # For AUR dependencies (if any), we'd use an AUR helper, but we provided PKGBUILDs for most
-  makepkg -s --noconfirm --nocheck
-  
+  pkg_dir="/build/pkgbuilds/$pkg"
+
+  # Build as the unprivileged builder user because makepkg refuses to run as root.
+  su builder -c "cd '$pkg_dir' && makepkg -s --noconfirm --nocheck"
+
   # Copy built packages to local repo
-  cp *.pkg.tar.zst $REPO_DIR/
-  
+  cp "$pkg_dir"/*.pkg.tar.zst "$REPO_DIR/"
+
   # Add to local repo db
-  repo-add $REPO_DIR/pipa.db.tar.gz $REPO_DIR/*.pkg.tar.zst
-  
+  repo-add "$REPO_DIR/pipa.db.tar.gz" "$REPO_DIR"/*.pkg.tar.zst
+
   # Install the built package so it can satisfy dependencies of subsequent packages
-  sudo pacman -U --noconfirm *.pkg.tar.zst
-  
-  cd ../..
+  pacman -U --noconfirm "$pkg_dir"/*.pkg.tar.zst
 done
 
 echo "All packages built successfully and added to local repo at $REPO_DIR."
