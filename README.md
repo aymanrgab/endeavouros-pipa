@@ -2,12 +2,12 @@
 
 This project contains the build infrastructure and packages to port EndeavourOS to the Xiaomi Pad 6 (Pipa) device.
 
-## Automated Builds via GitHub Actions
+## Automated Builds via GitLab CI/CD
 
-This repository is configured with a GitHub Actions workflow (`.github/workflows/build-endeavouros-pipa.yml`) that automatically builds EndeavourOS images.
-The build process runs on GitHub's native `ubuntu-24.04-arm` runners to quickly cross-compile the kernel and package the rootfs.
+This repository is configured with a GitLab CI/CD pipeline (`.gitlab-ci.yml`) that automatically builds EndeavourOS images.
+The build process runs on GitLab's SaaS ARM64 runners (`saas-linux-medium-arm64`) to quickly cross-compile the kernel and package the rootfs.
 
-When a build completes, the output images are uploaded as GitHub Releases.
+When a build completes on the default branch, the output images are available as job artifacts and a GitLab Release is automatically created.
 
 ## Local Build Instructions
 
