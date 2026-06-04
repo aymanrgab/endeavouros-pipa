@@ -8,7 +8,6 @@ PKGS=(
   "qbootctl"
   "xiaomi-pipa-firmware"
   "alsa-ucm-conf-sm8250"
-  "pipa-kernel-flasher-hook"
   "bootmac"
   "hexagonrpc"
   "libssc"

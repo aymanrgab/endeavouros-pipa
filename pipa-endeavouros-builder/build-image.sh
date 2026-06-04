@@ -14,6 +14,8 @@ IMAGE_MNT="mnt_image"
 IMAGE_NAME="endeavouros-pipa-${DE_NAME}-${DATE}"
 ROOTFS_UUID=$(cat /proc/sys/kernel/random/uuid)
 PACMAN_CONF="$(pwd)/pacman-pipa.conf"
+SILICIUM_URL="https://github.com/onesaladleaf/Mu-Silicium/releases/download/v3.5-pocketblue/Mu-pipa.img"
+SILICIUM_SHA256="ea3e1e123beea7ee5394295bdfee75054711d4734e9403831fda7f037fc900b6"
 
 cleanup() {
     if mountpoint -q "$IMAGE_MNT"; then
@@ -97,9 +99,9 @@ arch-chroot "$ROOTFS_DIR" useradd -m -G audio,video,wheel,storage -s /bin/bash u
 echo 'user:147147' | arch-chroot "$ROOTFS_DIR" chpasswd
 echo 'root:root' | arch-chroot "$ROOTFS_DIR" chpasswd
 
-echo "### Generating boot image..."
-KERNEL_VER=$(find "$ROOTFS_DIR/usr/lib/modules" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | head -n 1)
-arch-chroot "$ROOTFS_DIR" kernel-install add "$KERNEL_VER" "/usr/lib/modules/$KERNEL_VER/vmlinuz"
+echo "### Fetching Mu-Silicium boot image..."
+wget -O "$IMAGE_DIR/$IMAGE_NAME/silicium.img" "$SILICIUM_URL"
+echo "$SILICIUM_SHA256  $IMAGE_DIR/$IMAGE_NAME/silicium.img" | sha256sum -c -
 
 echo "### Creating root.img..."
 SIZE=$(du -sBM --exclude="$ROOTFS_DIR/boot" "$ROOTFS_DIR" | awk '{print $1}' | tr -d 'M')
@@ -112,10 +114,6 @@ MKE2FS_DEVICE_PHYS_SECTSIZE=4096 MKE2FS_DEVICE_SECTSIZE=4096 \
 mount -o loop "$IMAGE_DIR/$IMAGE_NAME/root.img" "$IMAGE_MNT"
 rsync -aHAX --exclude '/tmp/*' --exclude '/boot/efi' --exclude '/efi' "$ROOTFS_DIR/" "$IMAGE_MNT/"
 umount "$IMAGE_MNT"
-
-echo "### Collecting boot artifacts..."
-cp "$ROOTFS_DIR/boot/boot-$KERNEL_VER.img" "$IMAGE_DIR/$IMAGE_NAME/boot.img" || \
-    echo "Warning: boot.img not found"
 
 echo "### Compressing image..."
 pushd "$IMAGE_DIR/$IMAGE_NAME" > /dev/null
