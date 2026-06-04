@@ -48,14 +48,25 @@ for pkg in "${PKGS[@]}"; do
     exit 1
   fi
 
+  install_packages=()
+  for package_path in "${built_packages[@]}"; do
+    case "$(basename "$package_path")" in
+      *-headers-*.pkg.tar.*) ;;
+      *) install_packages+=("$package_path") ;;
+    esac
+  done
+
   # Copy built packages to local repo
   cp "${built_packages[@]}" "$REPO_DIR/"
 
   # Add to local repo db
   repo-add "$REPO_DIR/pipa.db.tar.gz" "${built_packages[@]}"
 
-  # Install the built package so it can satisfy dependencies of subsequent packages
-  pacman -U --noconfirm "${built_packages[@]}"
+  # Install the runtime packages so they can satisfy dependencies of later builds.
+  # Skip split *-headers packages because they collide with the base linux-api-headers package.
+  if [ ${#install_packages[@]} -gt 0 ]; then
+    pacman -U --noconfirm "${install_packages[@]}"
+  fi
 done
 
 echo "All packages built successfully and added to local repo at $REPO_DIR."
