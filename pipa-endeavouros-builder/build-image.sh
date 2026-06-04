@@ -23,7 +23,7 @@ fi
 
 echo "### Extracting rootfs..."
 rm -rf "$ROOTFS_DIR"/*
-bsdtar -xpf ArchLinuxARM-aarch64-latest.tar.gz -C "$ROOTFS_DIR"
+tar -xpf ArchLinuxARM-aarch64-latest.tar.gz -C "$ROOTFS_DIR"
 
 echo "### Setting up QEMU static (if needed for cross-arch chroot)"
 cp /usr/bin/qemu-aarch64-static "$ROOTFS_DIR/usr/bin/" || true
