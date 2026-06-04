@@ -38,6 +38,8 @@ cp /repo/*.pkg.tar.zst "$ROOTFS_DIR/repo/" || echo "No local packages found. Mak
 cp /repo/pipa.db* "$ROOTFS_DIR/repo/" || true
 
 cat <<EOF >> "$ROOTFS_DIR/etc/pacman.conf"
+DisableSandbox
+
 [pipa]
 SigLevel = Optional TrustAll
 Server = file:///repo

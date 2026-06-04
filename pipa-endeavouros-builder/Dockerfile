@@ -6,6 +6,7 @@ FROM menci/archlinuxarm:base-devel
 RUN pacman-key --init && \
     pacman-key --populate archlinuxarm && \
     sed -i 's/CheckSpace/#CheckSpace/g' /etc/pacman.conf && \
+    sed -i 's/DisableSandbox//g' /etc/pacman.conf && echo "DisableSandbox" >> /etc/pacman.conf && \
     pacman -Sy --noconfirm archlinuxarm-keyring && \
     pacman -Su --noconfirm && \
     pacman -S --noconfirm \
