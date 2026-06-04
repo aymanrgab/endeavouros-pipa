@@ -1,0 +1,43 @@
+version: 2.1
+
+jobs:
+  build_images:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: arm.large
+    working_directory: ~/project
+    steps:
+      - checkout
+      - run:
+          name: Show runner details
+          command: |
+            uname -a
+            docker version
+      - run:
+          name: Build native ARM builder image
+          no_output_timeout: 90m
+          command: docker build pipa-endeavouros-builder -t pipa-endeavouros-builder
+      - run:
+          name: Build Plasma image
+          no_output_timeout: 90m
+          command: |
+            mkdir -p images
+            docker run --privileged \
+              -v "$PWD/images:/build/images" \
+              -v "/dev:/dev" \
+              pipa-endeavouros-builder plasma
+      - run:
+          name: Build GNOME image
+          no_output_timeout: 90m
+          command: |
+            docker run --privileged \
+              -v "$PWD/images:/build/images" \
+              -v "/dev:/dev" \
+              pipa-endeavouros-builder gnome
+      - store_artifacts:
+          path: images
+
+workflows:
+  build:
+    jobs:
+      - build_images

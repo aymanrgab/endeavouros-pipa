@@ -2,16 +2,16 @@
 
 This project contains the build infrastructure and packages to port EndeavourOS to the Xiaomi Pad 6 (Pipa) device.
 
-## Automated Builds via GitLab CI/CD
+## Automated Builds via CircleCI
 
-This repository is configured with a GitLab CI/CD pipeline (`.gitlab-ci.yml`) that automatically builds EndeavourOS images.
-The build process runs on GitLab's SaaS ARM64 runners (`saas-linux-medium-arm64`) to quickly cross-compile the kernel and package the rootfs.
+This repository is configured with a CircleCI pipeline ([config.yml](file:///Users/ayman/Documents/trae_projects/endavouros_pipa/.circleci/config.yml)) that builds EndeavourOS images on native ARM hardware.
+The pipeline uses CircleCI's `arm.large` machine resource class so the kernel build runs natively instead of under x86 emulation.
 
-When a build completes on the default branch, the output images are available as job artifacts and a GitLab Release is automatically created.
+When a build completes, the generated image ZIP files are available as CircleCI job artifacts.
 
 ## Local Build Instructions
 
-If you wish to build the images locally, you can do so using Docker on an ARM64 host, or an x86_64 host with QEMU binfmt configured.
+If you wish to build the images locally, you can do so using Docker on an ARM64 host, or an x86_64 host with QEMU binfmt configured. To use CircleCI with your GitLab repository, connect your GitLab account in CircleCI and create a project for this repository; CircleCI will automatically detect [config.yml](file:///Users/ayman/Documents/trae_projects/endavouros_pipa/.circleci/config.yml).
 
 1. Build the Builder container:
    ```bash
