@@ -19,8 +19,14 @@ PKGS=(
   "pipa-metapkg"
 )
 
-# Ensure base-devel is installed
-pacman -Syu --needed --noconfirm base-devel git sudo
+# Preinstall the Arch-side toolchain and libraries so makepkg never has to
+# invoke pacman itself. That avoids sudo/nosuid problems inside Docker build.
+pacman -Syu --needed --noconfirm \
+  base-devel git sudo gcc make \
+  arch-install-scripts e2fsprogs dosfstools zip unzip \
+  bc bison flex cpio kmod python tar xz meson ninja cmake rsync wget \
+  glib2 libgudev polkit libqmi protobuf-c qrtr dracut android-tools \
+  pahole gtk-doc umockdev
 
 # Create a local repo
 REPO_DIR="/repo"
@@ -32,7 +38,7 @@ for pkg in "${PKGS[@]}"; do
   pkg_dir="/build/pkgbuilds/$pkg"
 
   # Build as the unprivileged builder user because makepkg refuses to run as root.
-  su builder -c "cd '$pkg_dir' && makepkg -s --noconfirm --nocheck"
+  su builder -c "cd '$pkg_dir' && makepkg --nodeps --noconfirm --nocheck"
 
   # Copy built packages to local repo
   cp "$pkg_dir"/*.pkg.tar.zst "$REPO_DIR/"
