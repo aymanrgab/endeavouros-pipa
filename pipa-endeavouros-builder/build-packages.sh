@@ -40,14 +40,22 @@ for pkg in "${PKGS[@]}"; do
   # Build as the unprivileged builder user because makepkg refuses to run as root.
   su builder -c "cd '$pkg_dir' && makepkg --nodeps --noconfirm --nocheck"
 
+  shopt -s nullglob
+  built_packages=("$pkg_dir"/*.pkg.tar.zst "$pkg_dir"/*.pkg.tar.xz)
+  shopt -u nullglob
+  if [ ${#built_packages[@]} -eq 0 ]; then
+    echo "No package archives were produced for $pkg in $pkg_dir"
+    exit 1
+  fi
+
   # Copy built packages to local repo
-  cp "$pkg_dir"/*.pkg.tar.zst "$REPO_DIR/"
+  cp "${built_packages[@]}" "$REPO_DIR/"
 
   # Add to local repo db
-  repo-add "$REPO_DIR/pipa.db.tar.gz" "$REPO_DIR"/*.pkg.tar.zst
+  repo-add "$REPO_DIR/pipa.db.tar.gz" "${built_packages[@]}"
 
   # Install the built package so it can satisfy dependencies of subsequent packages
-  pacman -U --noconfirm "$pkg_dir"/*.pkg.tar.zst
+  pacman -U --noconfirm "${built_packages[@]}"
 done
 
 echo "All packages built successfully and added to local repo at $REPO_DIR."
