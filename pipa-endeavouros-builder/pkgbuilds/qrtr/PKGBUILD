@@ -7,6 +7,8 @@ url="https://github.com/linux-msm/qrtr"
 license=('BSD')
 depends=('systemd')
 makedepends=('git' 'meson' 'ninja')
+provides=('qrtr-git')
+conflicts=('qrtr-git')
 source=("git+https://github.com/linux-msm/qrtr.git")
 md5sums=('SKIP')
 

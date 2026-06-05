@@ -7,6 +7,8 @@ url="https://github.com/linux-msm/rmtfs"
 license=('BSD')
 depends=('qrtr' 'libqmi')
 makedepends=('git' 'meson' 'ninja')
+provides=('rmtfs-git')
+conflicts=('rmtfs-git')
 source=("git+https://github.com/linux-msm/rmtfs.git")
 md5sums=('SKIP')
 

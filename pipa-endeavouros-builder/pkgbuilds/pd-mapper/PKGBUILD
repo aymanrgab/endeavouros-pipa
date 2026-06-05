@@ -7,6 +7,8 @@ url="https://github.com/linux-msm/pd-mapper"
 license=('BSD')
 depends=('qrtr')
 makedepends=('git' 'meson' 'ninja')
+provides=('pd-mapper-git')
+conflicts=('pd-mapper-git')
 source=("git+https://github.com/linux-msm/pd-mapper.git")
 md5sums=('SKIP')
 
