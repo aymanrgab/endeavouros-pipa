@@ -4,7 +4,7 @@ pkgrel=1
 pkgdesc="Xiaomi Pad 6 support meta package for EndeavourOS"
 arch=('any')
 license=('MIT')
-depends=('linux-pipa' 'xiaomi-pipa-firmware' 'qbootctl' 'pipa-dracut' 'pipa-sound-conf' 'bootmac' 'pipa-sensors')
+depends=('linux-pipa' 'xiaomi-pipa-firmware' 'qbootctl' 'pipa-dracut' 'pipa-sound-conf' 'bootmac' 'pipa-sensors' 'qrtr' 'rmtfs' 'tqftpserv' 'pd-mapper')
 
 package() {
   mkdir -p "$pkgdir"

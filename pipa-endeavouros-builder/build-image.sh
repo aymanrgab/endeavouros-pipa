@@ -69,7 +69,7 @@ BASE_PACKAGES=(
     networkmanager bluez bluez-utils iwd
     pipewire pipewire-alsa pipewire-pulse pipewire-jack wireplumber
     power-profiles-daemon modemmanager xdg-user-dirs
-    iptables noto-fonts qrtr rmtfs tqftpserv pd-mapper maliit-keyboard
+    iptables noto-fonts maliit-keyboard
     grub
     endeavouros-keyring endeavouros-mirrorlist endeavouros-theming
     eos-hooks eos-update-notifier welcome
