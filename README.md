@@ -36,22 +36,26 @@ The output ZIP file(s) will be placed in the `images/` directory. Each build arc
 
 - `silicium.img`: the Mu-Silicium boot image for Xiaomi Pad 6 / Pipa
 - `endeavouros_esp.raw`: the EFI system partition image used by Mu-Silicium/UEFI
-- `endeavouros_rootfs.raw`: the EndeavourOS root filesystem image, including `/boot`
+- `endeavouros_boot.raw`: a dedicated ext4 `/boot` image containing GRUB payloads, kernel, initramfs, and DTB
+- `endeavouros_rootfs.raw`: the EndeavourOS root filesystem image mounted as `/`
 - `flash.sh`: a helper script showing the expected fastboot flashing order
+- `flash-multiboot.sh`: an interactive helper with simple menus for choosing the boot slot and entering only the rootfs partition name
 
 The builder uses a pacstrap-based rootfs flow inspired by [endeavouros-arm/plasma-image](https://github.com/endeavouros-arm/plasma-image), while the boot image artifact is sourced from the Mu-Silicium release used by [pocketblue](https://github.com/pocketblue/pocketblue).
-The generated GRUB configuration now uses stable filesystem labels instead of random UUIDs so recovery edits are less fragile after reflashing.
+The generated GRUB configuration uses stable filesystem labels so recovery edits are less fragile after reflashing, and now redirects from the ESP into a dedicated `boot` filesystem instead of loading the kernel directly from the rootfs.
 
 ## Flashing Instructions
 
 1. Ensure your device bootloader is unlocked.
 2. Flash the generated `silicium.img` to the device boot slot(s).
 3. Flash `endeavouros_esp.raw` to the EFI partition used by your current Pipa flashing layout.
-4. Flash `endeavouros_rootfs.raw` to the root/userdata partition.
-5. Erase `dtbo_ab` if your current setup requires it before first boot.
-6. Reboot the device.
+4. Flash `endeavouros_boot.raw` to the `cust` partition.
+5. Flash `endeavouros_rootfs.raw` to the `linux` partition.
+6. Erase `dtbo_ab` if your current setup requires it before first boot.
+7. Reboot the device.
 
-The exact flashing sequence follows the same Mu-Silicium UEFI model used by pocketblue, but the kernel, initramfs, and GRUB files now live in the root filesystem `/boot` instead of a separate `cust` partition.
+The exact flashing sequence follows the same Mu-Silicium UEFI model used by pocketblue more closely than before by restoring a dedicated `cust`/`boot` partition for the kernel, initramfs, GRUB configuration, and device tree.
+If you need a different slot or rootfs target for multiboot testing, use `flash-multiboot.sh`; it offers menu-based selection for the boot slot and asks only for the rootfs partition name, while keeping the ESP and dedicated boot partitions on the default `rawdump` and `cust` targets.
 
 ## Acknowledgements
 

@@ -31,7 +31,7 @@ prepare() {
 
 build() {
   cd $_srcname-${_commit}
-  make EXTRAVERSION="-${pkgrel}-pipa" -j$(nproc) Image.gz modules dtbs
+  make EXTRAVERSION="-${pkgrel}-pipa" -j$(nproc) Image Image.gz modules dtbs
 }
 
 package_linux-pipa() {
@@ -45,6 +45,7 @@ package_linux-pipa() {
 
   mkdir -p "$pkgdir/boot"
   cp arch/arm64/boot/Image.gz "$pkgdir/boot/vmlinuz-$kernver"
+  cp arch/arm64/boot/Image "$pkgdir/boot/vmlinuz-$kernver.uncompressed"
   cp System.map "$pkgdir/boot/System.map-$kernver"
   cp .config "$pkgdir/boot/config-$kernver"
 
@@ -54,6 +55,7 @@ package_linux-pipa() {
   cp arch/arm64/boot/dts/qcom/sm8250-xiaomi-pipa.dtb "$pkgdir/usr/lib/modules/$kernver/devicetree/"
   ln -s devicetree "$pkgdir/usr/lib/modules/$kernver/dtb"
   cp arch/arm64/boot/Image.gz "$pkgdir/usr/lib/modules/$kernver/vmlinuz"
+  cp arch/arm64/boot/Image "$pkgdir/usr/lib/modules/$kernver/vmlinuz.uncompressed"
   
   rm -f "$pkgdir/usr/lib/modules/$kernver/build"
   rm -f "$pkgdir/usr/lib/modules/$kernver/source"

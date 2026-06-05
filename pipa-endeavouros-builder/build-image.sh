@@ -12,13 +12,16 @@ ROOTFS_DIR="rootfs"
 IMAGE_DIR="images"
 IMAGE_MNT="mnt_image"
 ESP_MNT="mnt_esp"
+BOOT_MNT="mnt_boot"
 IMAGE_NAME="endeavouros-pipa-${DE_NAME}-${DATE}"
 ROOTFS_LABEL="eos-pipa"
+BOOT_LABEL="boot"
 ESP_LABEL="EOSPIPAESP"
 PACMAN_CONF="$(pwd)/pacman-pipa.conf"
 SILICIUM_URL="https://github.com/onesaladleaf/Mu-Silicium/releases/download/v3.5-pocketblue/Mu-pipa.img"
 SILICIUM_SHA256="ea3e1e123beea7ee5394295bdfee75054711d4734e9403831fda7f037fc900b6"
 ESP_SIZE_MB=128
+BOOT_SIZE_MB=1024
 
 cleanup() {
     if mountpoint -q "$IMAGE_MNT"; then
@@ -27,11 +30,14 @@ cleanup() {
     if mountpoint -q "$ESP_MNT"; then
         umount "$ESP_MNT"
     fi
+    if mountpoint -q "$BOOT_MNT"; then
+        umount "$BOOT_MNT"
+    fi
     rm -f "$PACMAN_CONF"
 }
 trap cleanup EXIT
 
-mkdir -p "$IMAGE_DIR/$IMAGE_NAME" "$IMAGE_MNT" "$ESP_MNT"
+mkdir -p "$IMAGE_DIR/$IMAGE_NAME" "$IMAGE_MNT" "$ESP_MNT" "$BOOT_MNT"
 rm -rf "$ROOTFS_DIR"
 mkdir -p "$ROOTFS_DIR"
 
@@ -100,8 +106,10 @@ echo "### Writing target pacman configuration..."
 cp "$PACMAN_CONF" "$ROOTFS_DIR/etc/pacman.conf"
 
 KERNEL_VER=$(find "$ROOTFS_DIR/usr/lib/modules" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | head -n 1)
-KERNEL_IMAGE=$(find "$ROOTFS_DIR/boot" -maxdepth 1 -type f -name 'vmlinuz-*' | head -n 1)
+KERNEL_IMAGE="$ROOTFS_DIR/boot/vmlinuz-$KERNEL_VER"
+KERNEL_IMAGE_UNCOMPRESSED="$ROOTFS_DIR/boot/vmlinuz-$KERNEL_VER.uncompressed"
 INITRAMFS_IMAGE="$ROOTFS_DIR/boot/initramfs-$KERNEL_VER.img"
+DTB_IMAGE="$ROOTFS_DIR/usr/lib/modules/$KERNEL_VER/devicetree/sm8250-xiaomi-pipa.dtb"
 
 echo "### Preparing dracut configuration..."
 echo 'LANG=C.UTF-8' > "$ROOTFS_DIR/etc/locale.conf"
@@ -120,6 +128,7 @@ echo "root=LABEL=$ROOTFS_LABEL rw rootwait console=tty0 quiet splash" > "$ROOTFS
 echo "### Setting up /etc/fstab..."
 cat > "$ROOTFS_DIR/etc/fstab" <<EOF
 LABEL=$ROOTFS_LABEL / ext4 defaults 0 1
+LABEL=$BOOT_LABEL /boot ext4 defaults 0 2
 LABEL=$ESP_LABEL /boot/efi vfat defaults 0 2
 EOF
 
@@ -137,15 +146,51 @@ echo "### Fetching Mu-Silicium boot image..."
 wget -O "$IMAGE_DIR/$IMAGE_NAME/silicium.img" "$SILICIUM_URL"
 echo "$SILICIUM_SHA256  $IMAGE_DIR/$IMAGE_NAME/silicium.img" | sha256sum -c -
 
-echo "### Installing GRUB files..."
+echo "### Installing GRUB redirect on rootfs..."
 mkdir -p "$ROOTFS_DIR/boot/efi" "$ROOTFS_DIR/boot/grub"
 cat > "$ROOTFS_DIR/boot/grub/grub.cfg" <<EOF
-search --no-floppy --label --set=rootfs $ROOTFS_LABEL
+search --no-floppy --label --set=boot $BOOT_LABEL
+set prefix=(\$boot)/grub2
+configfile (\$boot)/grub2/grub.cfg
+EOF
+
+echo "### Creating dedicated boot image..."
+truncate -s "${BOOT_SIZE_MB}M" "$IMAGE_DIR/$IMAGE_NAME/endeavouros_boot.raw"
+mkfs.ext4 -F -L "$BOOT_LABEL" "$IMAGE_DIR/$IMAGE_NAME/endeavouros_boot.raw"
+mount -o loop "$IMAGE_DIR/$IMAGE_NAME/endeavouros_boot.raw" "$BOOT_MNT"
+mkdir -p "$BOOT_MNT/boot/devicetree" "$BOOT_MNT/grub2" "$BOOT_MNT/efi"
+cp "$KERNEL_IMAGE" "$BOOT_MNT/boot/"
+cp "$INITRAMFS_IMAGE" "$BOOT_MNT/boot/"
+cp "$ROOTFS_DIR/boot/System.map-$KERNEL_VER" "$BOOT_MNT/boot/"
+cp "$ROOTFS_DIR/boot/config-$KERNEL_VER" "$BOOT_MNT/boot/"
+cp "$DTB_IMAGE" "$BOOT_MNT/boot/devicetree/"
+if [ -f "$KERNEL_IMAGE_UNCOMPRESSED" ]; then
+    cp "$KERNEL_IMAGE_UNCOMPRESSED" "$BOOT_MNT/boot/"
+fi
+cat > "$BOOT_MNT/grub2/grub.cfg" <<EOF
+set default=0
+set timeout=5
+
+search --no-floppy --label --set=boot $BOOT_LABEL
+set root=(\$boot)
+
 menuentry "EndeavourOS ARM (Pipa)" {
-    linux (\$rootfs)/boot/$(basename "$KERNEL_IMAGE") root=LABEL=$ROOTFS_LABEL rw rootwait console=tty0 quiet splash
-    initrd (\$rootfs)/boot/$(basename "$INITRAMFS_IMAGE")
+    devicetree (\$boot)/boot/devicetree/$(basename "$DTB_IMAGE")
+    linux (\$boot)/boot/$(basename "$KERNEL_IMAGE") root=LABEL=$ROOTFS_LABEL rw rootwait boot=LABEL=$BOOT_LABEL console=tty0 console=ttyS0 quiet splash
+    initrd (\$boot)/boot/$(basename "$INITRAMFS_IMAGE")
 }
 EOF
+if [ -f "$KERNEL_IMAGE_UNCOMPRESSED" ]; then
+cat >> "$BOOT_MNT/grub2/grub.cfg" <<EOF
+
+menuentry "EndeavourOS ARM (Pipa) - Uncompressed Kernel" {
+    devicetree (\$boot)/boot/devicetree/$(basename "$DTB_IMAGE")
+    linux (\$boot)/boot/$(basename "$KERNEL_IMAGE_UNCOMPRESSED") root=LABEL=$ROOTFS_LABEL rw rootwait boot=LABEL=$BOOT_LABEL console=tty0 console=ttyS0 quiet splash
+    initrd (\$boot)/boot/$(basename "$INITRAMFS_IMAGE")
+}
+EOF
+fi
+umount "$BOOT_MNT"
 
 echo "### Creating EFI system partition image..."
 truncate -s "${ESP_SIZE_MB}M" "$IMAGE_DIR/$IMAGE_NAME/endeavouros_esp.raw"
@@ -153,19 +198,19 @@ mkfs.fat -F 16 -n "$ESP_LABEL" "$IMAGE_DIR/$IMAGE_NAME/endeavouros_esp.raw"
 mount -o loop "$IMAGE_DIR/$IMAGE_NAME/endeavouros_esp.raw" "$ESP_MNT"
 mkdir -p "$ESP_MNT/EFI/BOOT"
 cat > "$IMAGE_DIR/$IMAGE_NAME/grub-embedded.cfg" <<EOF
-search --no-floppy --label --set=rootfs $ROOTFS_LABEL
-set prefix=(\$rootfs)/boot/grub
-configfile (\$rootfs)/boot/grub/grub.cfg
+search --no-floppy --label --set=boot $BOOT_LABEL
+set prefix=(\$boot)/grub2
+configfile (\$boot)/grub2/grub.cfg
 EOF
 grub-mkstandalone \
     -O arm64-efi \
-    --modules="part_gpt part_msdos fat ext2 normal search search_label configfile linux gzio" \
+    --modules="part_gpt part_msdos fat ext2 normal search search_label configfile linux gzio devicetree" \
     -o "$ESP_MNT/EFI/BOOT/BOOTAA64.EFI" \
     "boot/grub/grub.cfg=$IMAGE_DIR/$IMAGE_NAME/grub-embedded.cfg"
 cat > "$ESP_MNT/EFI/BOOT/grub.cfg" <<EOF
-search --no-floppy --label --set=rootfs $ROOTFS_LABEL
-set prefix=(\$rootfs)/boot/grub
-configfile (\$rootfs)/boot/grub/grub.cfg
+search --no-floppy --label --set=boot $BOOT_LABEL
+set prefix=(\$boot)/grub2
+configfile (\$boot)/grub2/grub.cfg
 EOF
 umount "$ESP_MNT"
 
@@ -189,10 +234,135 @@ fastboot getvar product 2>&1 | grep pipa
 fastboot erase dtbo_ab
 fastboot flash boot_ab silicium.img
 fastboot flash rawdump endeavouros_esp.raw
-fastboot flash userdata endeavouros_rootfs.raw
+fastboot flash cust endeavouros_boot.raw
+fastboot flash linux endeavouros_rootfs.raw
 fastboot reboot
 EOF
 chmod +x "$IMAGE_DIR/$IMAGE_NAME/flash.sh"
+
+echo "### Writing multiboot flash helper script..."
+cat > "$IMAGE_DIR/$IMAGE_NAME/flash-multiboot.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+choose_from_menu() {
+    local prompt="$1"
+    local default_index="$2"
+    shift 2
+
+    local options=("$@")
+    local answer
+    local index
+
+    echo "$prompt"
+    for index in "${!options[@]}"; do
+        printf '  %d) %s\n' "$((index + 1))" "${options[$index]}"
+    done
+
+    while true; do
+        read -r -p "Select an option [$default_index]: " answer
+        if [ -z "$answer" ]; then
+            answer="$default_index"
+        fi
+        if [[ "$answer" =~ ^[0-9]+$ ]] && [ "$answer" -ge 1 ] && [ "$answer" -le "${#options[@]}" ]; then
+            printf '%s\n' "${options[$((answer - 1))]}"
+            return 0
+        fi
+        echo "Invalid selection: $answer" >&2
+    done
+}
+
+prompt_with_default() {
+    local prompt="$1"
+    local default_value="$2"
+    local value
+
+    read -r -p "$prompt [$default_value]: " value
+    if [ -z "$value" ]; then
+        value="$default_value"
+    fi
+    printf '%s\n' "$value"
+}
+
+echo "### Xiaomi Pad 6 multiboot flasher"
+echo "### Press Enter to accept the default shown in brackets."
+echo
+
+BOOT_SLOT_TARGET="${BOOT_SLOT_TARGET:-}"
+ROOTFS_PARTITION="${ROOTFS_PARTITION:-}"
+ERASE_DTBO="${ERASE_DTBO:-}"
+ESP_PARTITION="rawdump"
+BOOT_PARTITION="cust"
+
+if [ -z "$BOOT_SLOT_TARGET" ]; then
+    BOOT_SLOT_TARGET="$(choose_from_menu 'Choose the boot slot target:' 3 \
+        'boot_a' \
+        'boot_b' \
+        'boot_ab')"
+fi
+
+if [ -z "$ROOTFS_PARTITION" ]; then
+    ROOTFS_PARTITION="$(prompt_with_default 'Root filesystem partition name' 'linux')"
+fi
+
+if [ -z "$ERASE_DTBO" ]; then
+    ERASE_DTBO="$(choose_from_menu 'Erase dtbo_ab before flashing?' 1 \
+        'yes' \
+        'no')"
+fi
+
+case "$BOOT_SLOT_TARGET" in
+    boot_a|boot_b|boot_ab) ;;
+    *)
+        echo "Unsupported boot slot target: $BOOT_SLOT_TARGET" >&2
+        exit 1
+        ;;
+esac
+
+case "$ERASE_DTBO" in
+    yes|y|Y)
+        ERASE_DTBO="yes"
+        ;;
+    no|n|N)
+        ERASE_DTBO="no"
+        ;;
+    *)
+        echo "ERASE_DTBO must be yes or no" >&2
+        exit 1
+        ;;
+esac
+
+fastboot getvar product 2>&1 | grep pipa
+
+if [ "$ERASE_DTBO" = "yes" ]; then
+    fastboot erase dtbo_ab
+fi
+
+echo "### Flash plan"
+echo "boot image  -> $BOOT_SLOT_TARGET"
+echo "esp image   -> $ESP_PARTITION"
+echo "boot image  -> $BOOT_PARTITION"
+echo "rootfs      -> $ROOTFS_PARTITION"
+echo "erase dtbo  -> $ERASE_DTBO"
+echo
+
+read -r -p "Proceed with flashing? [Y/n]: " CONFIRM_FLASH
+case "${CONFIRM_FLASH:-Y}" in
+    y|Y|yes|YES|"")
+        ;;
+    *)
+        echo "Aborted."
+        exit 0
+        ;;
+esac
+
+fastboot flash "$BOOT_SLOT_TARGET" silicium.img
+fastboot flash "$ESP_PARTITION" endeavouros_esp.raw
+fastboot flash "$BOOT_PARTITION" endeavouros_boot.raw
+fastboot flash "$ROOTFS_PARTITION" endeavouros_rootfs.raw
+fastboot reboot
+EOF
+chmod +x "$IMAGE_DIR/$IMAGE_NAME/flash-multiboot.sh"
 
 echo "### Compressing image..."
 pushd "$IMAGE_DIR/$IMAGE_NAME" > /dev/null
