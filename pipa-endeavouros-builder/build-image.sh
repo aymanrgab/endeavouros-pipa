@@ -108,6 +108,8 @@ cp "$PACMAN_CONF" "$ROOTFS_DIR/etc/pacman.conf"
 KERNEL_VER=$(find "$ROOTFS_DIR/usr/lib/modules" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | head -n 1)
 KERNEL_IMAGE="$ROOTFS_DIR/boot/vmlinuz-$KERNEL_VER"
 KERNEL_IMAGE_UNCOMPRESSED="$ROOTFS_DIR/boot/vmlinuz-$KERNEL_VER.uncompressed"
+KERNEL_IMAGE_DTB="$ROOTFS_DIR/boot/vmlinuz-$KERNEL_VER.dtb"
+KERNEL_IMAGE_UNCOMPRESSED_DTB="$ROOTFS_DIR/boot/vmlinuz-$KERNEL_VER.uncompressed.dtb"
 INITRAMFS_IMAGE="$ROOTFS_DIR/boot/initramfs-$KERNEL_VER.img"
 DTB_IMAGE="$ROOTFS_DIR/usr/lib/modules/$KERNEL_VER/devicetree/sm8250-xiaomi-pipa.dtb"
 
@@ -121,6 +123,12 @@ EOF
 
 echo "### Generating initramfs..."
 arch-chroot "$ROOTFS_DIR" dracut --force --kver "$KERNEL_VER" "/boot/initramfs-$KERNEL_VER.img"
+
+echo "### Preparing kernel+dtb images..."
+cat "$KERNEL_IMAGE" "$DTB_IMAGE" > "$KERNEL_IMAGE_DTB"
+if [ -f "$KERNEL_IMAGE_UNCOMPRESSED" ]; then
+    cat "$KERNEL_IMAGE_UNCOMPRESSED" "$DTB_IMAGE" > "$KERNEL_IMAGE_UNCOMPRESSED_DTB"
+fi
 
 echo "### Setting up /etc/cmdline..."
 echo "root=LABEL=$ROOTFS_LABEL rw rootwait console=tty0 quiet splash" > "$ROOTFS_DIR/etc/cmdline"
@@ -160,12 +168,16 @@ mkfs.ext4 -F -L "$BOOT_LABEL" "$IMAGE_DIR/$IMAGE_NAME/endeavouros_boot.raw"
 mount -o loop "$IMAGE_DIR/$IMAGE_NAME/endeavouros_boot.raw" "$BOOT_MNT"
 mkdir -p "$BOOT_MNT/boot/devicetree" "$BOOT_MNT/grub2" "$BOOT_MNT/efi"
 cp "$KERNEL_IMAGE" "$BOOT_MNT/boot/"
+cp "$KERNEL_IMAGE_DTB" "$BOOT_MNT/boot/"
 cp "$INITRAMFS_IMAGE" "$BOOT_MNT/boot/"
 cp "$ROOTFS_DIR/boot/System.map-$KERNEL_VER" "$BOOT_MNT/boot/"
 cp "$ROOTFS_DIR/boot/config-$KERNEL_VER" "$BOOT_MNT/boot/"
 cp "$DTB_IMAGE" "$BOOT_MNT/boot/devicetree/"
 if [ -f "$KERNEL_IMAGE_UNCOMPRESSED" ]; then
     cp "$KERNEL_IMAGE_UNCOMPRESSED" "$BOOT_MNT/boot/"
+fi
+if [ -f "$KERNEL_IMAGE_UNCOMPRESSED_DTB" ]; then
+    cp "$KERNEL_IMAGE_UNCOMPRESSED_DTB" "$BOOT_MNT/boot/"
 fi
 cat > "$BOOT_MNT/grub2/grub.cfg" <<EOF
 set default=0
@@ -175,17 +187,15 @@ search --no-floppy --label --set=boot $BOOT_LABEL
 set root=(\$boot)
 
 menuentry "EndeavourOS ARM (Pipa)" {
-    devicetree (\$boot)/boot/devicetree/$(basename "$DTB_IMAGE")
-    linux (\$boot)/boot/$(basename "$KERNEL_IMAGE") root=LABEL=$ROOTFS_LABEL rw rootwait boot=LABEL=$BOOT_LABEL console=tty0 console=ttyS0 quiet splash
+    linux (\$boot)/boot/$(basename "$KERNEL_IMAGE_DTB") root=LABEL=$ROOTFS_LABEL rw rootwait boot=LABEL=$BOOT_LABEL console=tty0 console=ttyS0 quiet splash
     initrd (\$boot)/boot/$(basename "$INITRAMFS_IMAGE")
 }
 EOF
-if [ -f "$KERNEL_IMAGE_UNCOMPRESSED" ]; then
+if [ -f "$KERNEL_IMAGE_UNCOMPRESSED_DTB" ]; then
 cat >> "$BOOT_MNT/grub2/grub.cfg" <<EOF
 
 menuentry "EndeavourOS ARM (Pipa) - Uncompressed Kernel" {
-    devicetree (\$boot)/boot/devicetree/$(basename "$DTB_IMAGE")
-    linux (\$boot)/boot/$(basename "$KERNEL_IMAGE_UNCOMPRESSED") root=LABEL=$ROOTFS_LABEL rw rootwait boot=LABEL=$BOOT_LABEL console=tty0 console=ttyS0 quiet splash
+    linux (\$boot)/boot/$(basename "$KERNEL_IMAGE_UNCOMPRESSED_DTB") root=LABEL=$ROOTFS_LABEL rw rootwait boot=LABEL=$BOOT_LABEL console=tty0 console=ttyS0 quiet splash
     initrd (\$boot)/boot/$(basename "$INITRAMFS_IMAGE")
 }
 EOF
@@ -204,7 +214,7 @@ configfile (\$boot)/grub2/grub.cfg
 EOF
 grub-mkstandalone \
     -O arm64-efi \
-    --modules="part_gpt part_msdos fat ext2 normal search search_label configfile linux gzio devicetree" \
+    --modules="part_gpt part_msdos fat ext2 normal search search_label configfile linux gzio" \
     -o "$ESP_MNT/EFI/BOOT/BOOTAA64.EFI" \
     "boot/grub/grub.cfg=$IMAGE_DIR/$IMAGE_NAME/grub-embedded.cfg"
 cat > "$ESP_MNT/EFI/BOOT/grub.cfg" <<EOF
