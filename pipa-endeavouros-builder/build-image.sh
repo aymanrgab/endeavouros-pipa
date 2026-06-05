@@ -166,6 +166,10 @@ arch-chroot "$ROOTFS_DIR" useradd -m -G audio,video,wheel,storage -s /bin/bash u
 echo 'user:147147' | arch-chroot "$ROOTFS_DIR" chpasswd
 echo 'root:root' | arch-chroot "$ROOTFS_DIR" chpasswd
 
+echo "### Configuring sudo..."
+echo "%wheel ALL=(ALL:ALL) ALL" > "$ROOTFS_DIR/etc/sudoers.d/wheel"
+chmod 0440 "$ROOTFS_DIR/etc/sudoers.d/wheel"
+
 echo "### Fetching Mu-Silicium boot image..."
 wget -O "$IMAGE_DIR/$IMAGE_NAME/silicium.img" "$SILICIUM_URL"
 echo "$SILICIUM_SHA256  $IMAGE_DIR/$IMAGE_NAME/silicium.img" | sha256sum -c -
