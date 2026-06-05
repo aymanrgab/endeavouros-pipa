@@ -36,23 +36,22 @@ The output ZIP file(s) will be placed in the `images/` directory. Each build arc
 
 - `silicium.img`: the Mu-Silicium boot image for Xiaomi Pad 6 / Pipa
 - `endeavouros_esp.raw`: the EFI system partition image used by Mu-Silicium/UEFI
-- `endeavouros_boot.raw`: the Linux `/boot` partition image containing kernel, initramfs, and GRUB config
-- `endeavouros_rootfs.raw`: the EndeavourOS root filesystem image
+- `endeavouros_rootfs.raw`: the EndeavourOS root filesystem image, including `/boot`
 - `flash.sh`: a helper script showing the expected fastboot flashing order
 
 The builder uses a pacstrap-based rootfs flow inspired by [endeavouros-arm/plasma-image](https://github.com/endeavouros-arm/plasma-image), while the boot image artifact is sourced from the Mu-Silicium release used by [pocketblue](https://github.com/pocketblue/pocketblue).
+The generated GRUB configuration now uses stable filesystem labels instead of random UUIDs so recovery edits are less fragile after reflashing.
 
 ## Flashing Instructions
 
 1. Ensure your device bootloader is unlocked.
 2. Flash the generated `silicium.img` to the device boot slot(s).
 3. Flash `endeavouros_esp.raw` to the EFI partition used by your current Pipa flashing layout.
-4. Flash `endeavouros_boot.raw` to the Linux `/boot` partition used by your current Pipa flashing layout.
-5. Flash `endeavouros_rootfs.raw` to the root/userdata partition.
-6. Erase `dtbo_ab` if your current setup requires it before first boot.
-7. Reboot the device.
+4. Flash `endeavouros_rootfs.raw` to the root/userdata partition.
+5. Erase `dtbo_ab` if your current setup requires it before first boot.
+6. Reboot the device.
 
-The exact flashing sequence should follow the same Pipa boot model used by pocketblue, with Mu-Silicium providing the Android boot image and the distribution-specific root filesystem provided separately.
+The exact flashing sequence follows the same Mu-Silicium UEFI model used by pocketblue, but the kernel, initramfs, and GRUB files now live in the root filesystem `/boot` instead of a separate `cust` partition.
 
 ## Acknowledgements
 

@@ -11,24 +11,18 @@ DATE=$(date +%Y%m%d)
 ROOTFS_DIR="rootfs"
 IMAGE_DIR="images"
 IMAGE_MNT="mnt_image"
-BOOT_MNT="mnt_boot"
 ESP_MNT="mnt_esp"
 IMAGE_NAME="endeavouros-pipa-${DE_NAME}-${DATE}"
-ROOTFS_UUID=$(cat /proc/sys/kernel/random/uuid)
-BOOT_UUID=$(cat /proc/sys/kernel/random/uuid)
-ESP_VOLID=$(hexdump -n 4 -e '4/1 "%02X"' /dev/urandom)
+ROOTFS_LABEL="eos-pipa"
+ESP_LABEL="EOSPIPAESP"
 PACMAN_CONF="$(pwd)/pacman-pipa.conf"
 SILICIUM_URL="https://github.com/onesaladleaf/Mu-Silicium/releases/download/v3.5-pocketblue/Mu-pipa.img"
 SILICIUM_SHA256="ea3e1e123beea7ee5394295bdfee75054711d4734e9403831fda7f037fc900b6"
 ESP_SIZE_MB=128
-BOOT_SIZE_MB=1024
 
 cleanup() {
     if mountpoint -q "$IMAGE_MNT"; then
         umount "$IMAGE_MNT"
-    fi
-    if mountpoint -q "$BOOT_MNT"; then
-        umount "$BOOT_MNT"
     fi
     if mountpoint -q "$ESP_MNT"; then
         umount "$ESP_MNT"
@@ -37,7 +31,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-mkdir -p "$IMAGE_DIR/$IMAGE_NAME" "$IMAGE_MNT" "$BOOT_MNT" "$ESP_MNT"
+mkdir -p "$IMAGE_DIR/$IMAGE_NAME" "$IMAGE_MNT" "$ESP_MNT"
 rm -rf "$ROOTFS_DIR"
 mkdir -p "$ROOTFS_DIR"
 
@@ -121,13 +115,12 @@ echo "### Generating initramfs..."
 arch-chroot "$ROOTFS_DIR" dracut --force --kver "$KERNEL_VER" "/boot/initramfs-$KERNEL_VER.img"
 
 echo "### Setting up /etc/cmdline..."
-echo "root=UUID=$ROOTFS_UUID rw rootwait console=tty0 quiet splash" > "$ROOTFS_DIR/etc/cmdline"
+echo "root=LABEL=$ROOTFS_LABEL rw rootwait console=tty0 quiet splash" > "$ROOTFS_DIR/etc/cmdline"
 
 echo "### Setting up /etc/fstab..."
 cat > "$ROOTFS_DIR/etc/fstab" <<EOF
-UUID=$ROOTFS_UUID / ext4 defaults 0 1
-UUID=$BOOT_UUID /boot ext4 defaults 0 2
-UUID=$(printf '%s-%s' "${ESP_VOLID:0:4}" "${ESP_VOLID:4:4}") /boot/efi vfat defaults 0 2
+LABEL=$ROOTFS_LABEL / ext4 defaults 0 1
+LABEL=$ESP_LABEL /boot/efi vfat defaults 0 2
 EOF
 
 echo "### Configuring system services..."
@@ -144,51 +137,45 @@ echo "### Fetching Mu-Silicium boot image..."
 wget -O "$IMAGE_DIR/$IMAGE_NAME/silicium.img" "$SILICIUM_URL"
 echo "$SILICIUM_SHA256  $IMAGE_DIR/$IMAGE_NAME/silicium.img" | sha256sum -c -
 
-echo "### Creating root filesystem image..."
-SIZE=$(du -sBM --exclude="$ROOTFS_DIR/boot" "$ROOTFS_DIR" | awk '{print $1}' | tr -d 'M')
-SIZE=$((SIZE + (SIZE / 8) + 512))
-truncate -s "${SIZE}M" "$IMAGE_DIR/$IMAGE_NAME/endeavouros_rootfs.raw"
-
-MKE2FS_DEVICE_PHYS_SECTSIZE=4096 MKE2FS_DEVICE_SECTSIZE=4096 \
-    mkfs.ext4 -U "$ROOTFS_UUID" -L 'endeavouros' "$IMAGE_DIR/$IMAGE_NAME/endeavouros_rootfs.raw"
-
-mount -o loop "$IMAGE_DIR/$IMAGE_NAME/endeavouros_rootfs.raw" "$IMAGE_MNT"
-rsync -aHAX --exclude '/tmp/*' --exclude '/boot/*' --exclude '/boot/efi' --exclude '/efi' "$ROOTFS_DIR/" "$IMAGE_MNT/"
-umount "$IMAGE_MNT"
-
-echo "### Creating separate boot partition image..."
-truncate -s "${BOOT_SIZE_MB}M" "$IMAGE_DIR/$IMAGE_NAME/endeavouros_boot.raw"
-mkfs.ext4 -U "$BOOT_UUID" -L 'endeavouros-boot' "$IMAGE_DIR/$IMAGE_NAME/endeavouros_boot.raw"
-mount -o loop "$IMAGE_DIR/$IMAGE_NAME/endeavouros_boot.raw" "$BOOT_MNT"
-rsync -aHAX "$ROOTFS_DIR/boot/" "$BOOT_MNT/"
-
-mkdir -p "$BOOT_MNT/grub"
-cat > "$BOOT_MNT/grub/grub.cfg" <<EOF
-search --no-floppy --fs-uuid --set=boot $BOOT_UUID
+echo "### Installing GRUB files..."
+mkdir -p "$ROOTFS_DIR/boot/efi" "$ROOTFS_DIR/boot/grub"
+cat > "$ROOTFS_DIR/boot/grub/grub.cfg" <<EOF
+search --no-floppy --label --set=rootfs $ROOTFS_LABEL
 menuentry "EndeavourOS ARM (Pipa)" {
-    linux (\$boot)/$(basename "$KERNEL_IMAGE") root=UUID=$ROOTFS_UUID rw rootwait console=tty0 quiet splash
-    initrd (\$boot)/$(basename "$INITRAMFS_IMAGE")
+    linux (\$rootfs)/boot/$(basename "$KERNEL_IMAGE") root=LABEL=$ROOTFS_LABEL rw rootwait console=tty0 quiet splash
+    initrd (\$rootfs)/boot/$(basename "$INITRAMFS_IMAGE")
 }
 EOF
 
 echo "### Creating EFI system partition image..."
 truncate -s "${ESP_SIZE_MB}M" "$IMAGE_DIR/$IMAGE_NAME/endeavouros_esp.raw"
-mkfs.fat -F 16 -i "$ESP_VOLID" "$IMAGE_DIR/$IMAGE_NAME/endeavouros_esp.raw"
+mkfs.fat -F 16 -n "$ESP_LABEL" "$IMAGE_DIR/$IMAGE_NAME/endeavouros_esp.raw"
 mount -o loop "$IMAGE_DIR/$IMAGE_NAME/endeavouros_esp.raw" "$ESP_MNT"
 grub-install \
     --target=arm64-efi \
     --efi-directory="$ESP_MNT" \
-    --boot-directory="$BOOT_MNT" \
+    --boot-directory="$ROOTFS_DIR/boot" \
     --removable \
     --no-nvram
 mkdir -p "$ESP_MNT/EFI/BOOT"
 cat > "$ESP_MNT/EFI/BOOT/grub.cfg" <<EOF
-search --no-floppy --fs-uuid --set=boot $BOOT_UUID
-set prefix=(\$boot)/grub
-configfile (\$boot)/grub/grub.cfg
+search --no-floppy --label --set=rootfs $ROOTFS_LABEL
+set prefix=(\$rootfs)/boot/grub
+configfile (\$rootfs)/boot/grub/grub.cfg
 EOF
 umount "$ESP_MNT"
-umount "$BOOT_MNT"
+
+echo "### Creating root filesystem image..."
+SIZE=$(du -sBM "$ROOTFS_DIR" | awk '{print $1}' | tr -d 'M')
+SIZE=$((SIZE + (SIZE / 8) + 512))
+truncate -s "${SIZE}M" "$IMAGE_DIR/$IMAGE_NAME/endeavouros_rootfs.raw"
+
+MKE2FS_DEVICE_PHYS_SECTSIZE=4096 MKE2FS_DEVICE_SECTSIZE=4096 \
+    mkfs.ext4 -L "$ROOTFS_LABEL" "$IMAGE_DIR/$IMAGE_NAME/endeavouros_rootfs.raw"
+
+mount -o loop "$IMAGE_DIR/$IMAGE_NAME/endeavouros_rootfs.raw" "$IMAGE_MNT"
+rsync -aHAX --exclude '/tmp/*' --exclude '/boot/efi' --exclude '/efi' "$ROOTFS_DIR/" "$IMAGE_MNT/"
+umount "$IMAGE_MNT"
 
 echo "### Writing fastboot helper script..."
 cat > "$IMAGE_DIR/$IMAGE_NAME/flash.sh" <<'EOF'
@@ -198,7 +185,6 @@ fastboot getvar product 2>&1 | grep pipa
 fastboot erase dtbo_ab
 fastboot flash boot_ab silicium.img
 fastboot flash rawdump endeavouros_esp.raw
-fastboot flash cust endeavouros_boot.raw
 fastboot flash userdata endeavouros_rootfs.raw
 fastboot reboot
 EOF
