@@ -5,8 +5,8 @@ pkgdesc="Qualcomm Remote Filesystem Service"
 arch=('aarch64')
 url="https://github.com/linux-msm/rmtfs"
 license=('BSD')
-depends=('qrtr' 'libqmi')
-makedepends=('git' 'meson' 'ninja')
+depends=('qrtr' 'systemd')
+makedepends=('git' 'make')
 provides=('rmtfs-git')
 conflicts=('rmtfs-git')
 source=("git+https://github.com/linux-msm/rmtfs.git")
@@ -14,11 +14,10 @@ md5sums=('SKIP')
 
 build() {
   cd "$srcdir/$pkgname"
-  meson setup build --prefix=/usr --sysconfdir=/etc
-  meson compile -C build
+  make prefix=/usr
 }
 
 package() {
   cd "$srcdir/$pkgname"
-  meson install -C build --destdir="$pkgdir"
+  make DESTDIR="$pkgdir" prefix=/usr install
 }
