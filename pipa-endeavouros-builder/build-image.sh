@@ -151,13 +151,17 @@ echo "### Creating EFI system partition image..."
 truncate -s "${ESP_SIZE_MB}M" "$IMAGE_DIR/$IMAGE_NAME/endeavouros_esp.raw"
 mkfs.fat -F 16 -n "$ESP_LABEL" "$IMAGE_DIR/$IMAGE_NAME/endeavouros_esp.raw"
 mount -o loop "$IMAGE_DIR/$IMAGE_NAME/endeavouros_esp.raw" "$ESP_MNT"
-grub-install \
-    --target=arm64-efi \
-    --efi-directory="$ESP_MNT" \
-    --boot-directory="$ROOTFS_DIR/boot" \
-    --removable \
-    --no-nvram
 mkdir -p "$ESP_MNT/EFI/BOOT"
+cat > "$IMAGE_DIR/$IMAGE_NAME/grub-embedded.cfg" <<EOF
+search --no-floppy --label --set=rootfs $ROOTFS_LABEL
+set prefix=(\$rootfs)/boot/grub
+configfile (\$rootfs)/boot/grub/grub.cfg
+EOF
+grub-mkstandalone \
+    -O arm64-efi \
+    --modules="part_gpt part_msdos fat ext2 normal search search_label configfile linux gzio" \
+    -o "$ESP_MNT/EFI/BOOT/BOOTAA64.EFI" \
+    "boot/grub/grub.cfg=$IMAGE_DIR/$IMAGE_NAME/grub-embedded.cfg"
 cat > "$ESP_MNT/EFI/BOOT/grub.cfg" <<EOF
 search --no-floppy --label --set=rootfs $ROOTFS_LABEL
 set prefix=(\$rootfs)/boot/grub
