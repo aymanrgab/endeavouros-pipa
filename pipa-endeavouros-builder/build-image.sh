@@ -137,7 +137,6 @@ echo "### Setting up /etc/fstab..."
 cat > "$ROOTFS_DIR/etc/fstab" <<EOF
 LABEL=$ROOTFS_LABEL / ext4 defaults 0 1
 LABEL=$BOOT_LABEL /boot ext4 defaults 0 2
-LABEL=$ESP_LABEL /boot/efi vfat defaults 0 2
 EOF
 
 echo "### Configuring system services..."
@@ -212,7 +211,7 @@ configfile (\$boot)/grub2/grub.cfg
 EOF
 grub-mkstandalone \
     -O arm64-efi \
-    --modules="part_gpt part_msdos fat ext2 normal search search_label configfile linux gzio" \
+    --modules="part_gpt part_msdos fat ext2 normal search search_label configfile linux gzio efi_gop efi_uga all_video" \
     -o "$ESP_MNT/EFI/BOOT/BOOTAA64.EFI" \
     "boot/grub/grub.cfg=$IMAGE_DIR/$IMAGE_NAME/grub-embedded.cfg"
 cat > "$ESP_MNT/EFI/BOOT/grub.cfg" <<EOF
