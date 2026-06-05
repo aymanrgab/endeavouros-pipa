@@ -69,7 +69,7 @@ BASE_PACKAGES=(
     networkmanager bluez bluez-utils iwd
     pipewire pipewire-alsa pipewire-pulse pipewire-jack wireplumber
     power-profiles-daemon modemmanager xdg-user-dirs
-    iptables noto-fonts
+    iptables noto-fonts qrtr rmtfs tqftpserv pd-mapper maliit-keyboard
     grub
     endeavouros-keyring endeavouros-mirrorlist endeavouros-theming
     eos-hooks eos-update-notifier welcome
@@ -143,6 +143,23 @@ echo "### Configuring system services..."
 arch-chroot "$ROOTFS_DIR" systemctl enable "$DISPLAY_MANAGER"
 arch-chroot "$ROOTFS_DIR" systemctl enable NetworkManager sshd bluetooth systemd-resolved
 arch-chroot "$ROOTFS_DIR" systemctl enable bootmac-bluetooth || true
+arch-chroot "$ROOTFS_DIR" systemctl enable qrtr-ns pd-mapper rmtfs tqftpserv || true
+
+echo "### Configuring SDDM for Touch/Wayland..."
+if [ "$DE_NAME" = "plasma" ]; then
+    mkdir -p "$ROOTFS_DIR/etc/sddm.conf.d"
+    cat > "$ROOTFS_DIR/etc/sddm.conf.d/10-wayland.conf" <<EOF
+[General]
+DisplayServer=wayland
+InputMethod=maliit
+
+[Wayland]
+CompositorCommand=kwin_wayland --drm --no-lockscreen --no-global-shortcuts --locale1
+
+[Theme]
+Current=breeze
+EOF
+fi
 
 echo "### Creating user..."
 arch-chroot "$ROOTFS_DIR" useradd -m -G audio,video,wheel,storage -s /bin/bash user || true
