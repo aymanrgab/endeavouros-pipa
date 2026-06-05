@@ -11,12 +11,12 @@ source=("git+https://github.com/linux-msm/tqftpserv.git")
 md5sums=('SKIP')
 
 build() {
-  cd "\$srcdir/\$pkgname"
+  cd "$srcdir/$pkgname"
   meson setup build --prefix=/usr --sysconfdir=/etc
   meson compile -C build
 }
 
 package() {
-  cd "\$srcdir/\$pkgname"
-  meson install -C build --destdir="\$pkgdir"
+  cd "$srcdir/$pkgname"
+  meson install -C build --destdir="$pkgdir"
 }
