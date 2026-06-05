@@ -104,6 +104,7 @@ pacstrap -C "$PACMAN_CONF" -KGM "$ROOTFS_DIR" "${BASE_PACKAGES[@]}" "${DESKTOP_P
 
 echo "### Writing target pacman configuration..."
 cp "$PACMAN_CONF" "$ROOTFS_DIR/etc/pacman.conf"
+sed -i '/^\[pipa\]/,/^Server = file:\/\/\/repo/d' "$ROOTFS_DIR/etc/pacman.conf"
 
 KERNEL_VER=$(find "$ROOTFS_DIR/usr/lib/modules" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | head -n 1)
 KERNEL_IMAGE="$ROOTFS_DIR/boot/vmlinuz-$KERNEL_VER"
