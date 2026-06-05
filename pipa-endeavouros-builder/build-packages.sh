@@ -68,7 +68,7 @@ for pkg in "${PKGS[@]}"; do
   # Install the runtime packages so they can satisfy dependencies of later builds.
   # Skip split *-headers packages because they collide with the base linux-api-headers package.
   if [ ${#install_packages[@]} -gt 0 ]; then
-    pacman -U --noconfirm "${install_packages[@]}"
+    pacman -U --noconfirm --ask=4 "${install_packages[@]}"
   fi
 done
 
