@@ -146,16 +146,32 @@ KERNEL_IMAGE_UNCOMPRESSED_DTB="$ROOTFS_DIR/boot/vmlinuz-$KERNEL_VER.uncompressed
 INITRAMFS_IMAGE="$ROOTFS_DIR/boot/initramfs-$KERNEL_VER.img"
 DTB_IMAGE="$ROOTFS_DIR/usr/lib/modules/$KERNEL_VER/devicetree/sm8250-xiaomi-pipa.dtb"
 
-echo "### Preparing dracut configuration..."
+echo "### Preparing initramfs configuration..."
 echo 'LANG=C.UTF-8' > "$ROOTFS_DIR/etc/locale.conf"
 echo 'KEYMAP=us' > "$ROOTFS_DIR/etc/vconsole.conf"
-mkdir -p "$ROOTFS_DIR/etc/dracut.conf.d"
-cat > "$ROOTFS_DIR/etc/dracut.conf.d/pipa.conf" <<EOF
-i18n_vars="/etc/locale.conf /etc/vconsole.conf"
-EOF
 
 echo "### Generating initramfs..."
-arch-chroot "$ROOTFS_DIR" dracut --force --kver "$KERNEL_VER" "/boot/initramfs-$KERNEL_VER.img"
+if arch-chroot "$ROOTFS_DIR" sh -c 'command -v dracut >/dev/null'; then
+    mkdir -p "$ROOTFS_DIR/etc/dracut.conf.d"
+    cat > "$ROOTFS_DIR/etc/dracut.conf.d/pipa.conf" <<EOF
+i18n_vars="/etc/locale.conf /etc/vconsole.conf"
+EOF
+    arch-chroot "$ROOTFS_DIR" dracut --force --kver "$KERNEL_VER" "/boot/initramfs-$KERNEL_VER.img"
+elif arch-chroot "$ROOTFS_DIR" sh -c 'command -v mkinitcpio >/dev/null'; then
+    arch-chroot "$ROOTFS_DIR" mkinitcpio -P
+else
+    echo "No supported initramfs generator found in target rootfs" >&2
+    exit 1
+fi
+
+if [ ! -f "$INITRAMFS_IMAGE" ] && [ -f "$ROOTFS_DIR/boot/initramfs.img" ]; then
+    INITRAMFS_IMAGE="$ROOTFS_DIR/boot/initramfs.img"
+fi
+
+if [ ! -f "$INITRAMFS_IMAGE" ]; then
+    echo "Initramfs image was not generated for $KERNEL_VER" >&2
+    exit 1
+fi
 
 echo "### Preparing kernel+dtb images..."
 cat "$KERNEL_IMAGE" "$DTB_IMAGE" > "$KERNEL_IMAGE_DTB"
