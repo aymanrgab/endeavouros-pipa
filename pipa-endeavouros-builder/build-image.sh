@@ -19,6 +19,7 @@ BOOT_LABEL="boot"
 ESP_LABEL="EOSPIPAESP"
 PACMAN_CONF="$(pwd)/pacman-pipa.conf"
 EFI_TEMPLATE_DIR="$(pwd)/efi-template"
+PIPA_REPO_URL="${PIPA_REPO_URL:-https://maakiopus.github.io/pipa-alarm/repo/}"
 SILICIUM_URL="https://github.com/onesaladleaf/Mu-Silicium/releases/download/v3.5-pocketblue/Mu-pipa.img"
 SILICIUM_SHA256="ea3e1e123beea7ee5394295bdfee75054711d4734e9403831fda7f037fc900b6"
 ESP_SIZE_MB=128
@@ -42,14 +43,6 @@ mkdir -p "$IMAGE_DIR/$IMAGE_NAME" "$IMAGE_MNT" "$ESP_MNT" "$BOOT_MNT"
 rm -rf "$ROOTFS_DIR"
 mkdir -p "$ROOTFS_DIR"
 
-shopt -s nullglob
-LOCAL_PACKAGES=(/repo/*.pkg.tar.zst /repo/*.pkg.tar.xz)
-shopt -u nullglob
-if [ ${#LOCAL_PACKAGES[@]} -eq 0 ]; then
-    echo "No local packages found in /repo. Run build-packages.sh first."
-    exit 1
-fi
-
 if [ ! -f "$EFI_TEMPLATE_DIR/EFI/BOOT/BOOTAA64.EFI" ] || [ ! -f "$EFI_TEMPLATE_DIR/EFI/endeavour/grubaa64.efi" ]; then
     echo "Missing Endeavour-style EFI template files in $EFI_TEMPLATE_DIR"
     exit 1
@@ -61,9 +54,9 @@ sed -i '/^DisableSandbox$/d' "$PACMAN_CONF"
 sed -i '/^\[options\]$/a DisableSandbox' "$PACMAN_CONF"
 cat <<EOF >> "$PACMAN_CONF"
 
-[pipa]
+[pipa-alarm]
 SigLevel = Optional TrustAll
-Server = file:///repo
+Server = $PIPA_REPO_URL
 
 [endeavouros]
 SigLevel = Optional TrustAll
@@ -72,14 +65,44 @@ EOF
 
 BASE_PACKAGES=(
     base base-devel sudo nano vim git wget rsync openssh lsb-release
-    networkmanager bluez-git iwd mesa
+    networkmanager iwd mesa
     pipewire pipewire-alsa pipewire-pulse pipewire-jack wireplumber
     power-profiles-daemon modemmanager xdg-user-dirs
     iptables noto-fonts qt6-virtualkeyboard
     grub
     endeavouros-keyring endeavouros-mirrorlist endeavouros-theming
     eos-hooks eos-update-notifier welcome
-    pipa-metapkg
+)
+
+# Install the published Pipa device package set explicitly from the external
+# pipa-alarm repo so the kernel and device support do not depend on a local
+# metapackage build existing in /repo.
+PIPA_REPO_PACKAGES=(
+    bluez-git
+    bootmac
+    box64
+    device-xiaomi-pipa
+    gamescope
+    hexagonrpcd
+    iio-sensor-proxy-libssc
+    libssc
+    linux-firmware-pipa-adreno
+    linux-firmware-pipa-adsp
+    linux-firmware-pipa-awinic
+    linux-firmware-pipa-cdsp
+    linux-firmware-pipa-hexagonfs
+    linux-firmware-pipa-novatek
+    linux-firmware-pipa-nuvolta
+    linux-firmware-pipa-slpi
+    linux-firmware-pipa-venus
+    linux-pipa
+    mangohud-git
+    mkbootimg-pipa
+    pipa-kernel-hooks
+    qbootctl
+    swclock-offset
+    widevine
+    wine-aarch64-hangover
 )
 
 case "$DE_NAME" in
@@ -110,11 +133,10 @@ case "$DE_NAME" in
 esac
 
 echo "### Bootstrapping rootfs with pacstrap..."
-pacstrap -C "$PACMAN_CONF" -KGM "$ROOTFS_DIR" "${BASE_PACKAGES[@]}" "${DESKTOP_PACKAGES[@]}"
+pacstrap -C "$PACMAN_CONF" -KGM "$ROOTFS_DIR" "${BASE_PACKAGES[@]}" "${PIPA_REPO_PACKAGES[@]}" "${DESKTOP_PACKAGES[@]}"
 
 echo "### Writing target pacman configuration..."
 cp "$PACMAN_CONF" "$ROOTFS_DIR/etc/pacman.conf"
-sed -i '/^\[pipa\]/,/^Server = file:\/\/\/repo/d' "$ROOTFS_DIR/etc/pacman.conf"
 
 KERNEL_VER=$(find "$ROOTFS_DIR/usr/lib/modules" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | head -n 1)
 KERNEL_IMAGE="$ROOTFS_DIR/boot/vmlinuz-$KERNEL_VER"
@@ -239,12 +261,15 @@ mkfs.fat -F 16 -n "$ESP_LABEL" "$IMAGE_DIR/$IMAGE_NAME/endeavouros_esp.raw"
 mount -o loop "$IMAGE_DIR/$IMAGE_NAME/endeavouros_esp.raw" "$ESP_MNT"
 # FAT cannot store Unix ownership, so avoid archive mode here.
 cp -r "$EFI_TEMPLATE_DIR/EFI" "$ESP_MNT/"
+mkdir -p "$ESP_MNT/EFI/fedora"
+cp -r "$ESP_MNT/EFI/endeavour/." "$ESP_MNT/EFI/fedora/"
 cat > "$ESP_MNT/EFI/BOOT/grub.cfg" <<EOF
 search --no-floppy --label --set=boot $BOOT_LABEL
 set prefix=(\$boot)/grub2
 configfile (\$boot)/grub2/grub.cfg
 EOF
-cat > "$ESP_MNT/EFI/endeavour/grub.cfg" <<EOF
+for shim_vendor in endeavour fedora; do
+cat > "$ESP_MNT/EFI/$shim_vendor/grub.cfg" <<EOF
 if [ -e (md/md-boot) ]; then
   set prefix=md/md-boot
 else
@@ -266,9 +291,10 @@ else
 fi
 boot
 EOF
-cat > "$ESP_MNT/EFI/endeavour/bootuuid.cfg" <<EOF
+cat > "$ESP_MNT/EFI/$shim_vendor/bootuuid.cfg" <<EOF
 set BOOT_UUID=""
 EOF
+done
 umount "$ESP_MNT"
 
 echo "### Creating root filesystem image..."

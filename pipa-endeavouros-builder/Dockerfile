@@ -28,8 +28,5 @@ COPY . /build/
 # Make scripts executable
 RUN chmod +x *.sh && chown -R builder:builder /build
 
-# Build packages during container build to cache them
-RUN bash ./build-packages.sh
-
 CMD []
 ENTRYPOINT ["/bin/bash", "./build-image.sh"]

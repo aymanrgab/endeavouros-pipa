@@ -19,7 +19,7 @@ If you wish to build the images locally, you can do so using Docker on an ARM64 
    ```bash
    docker build pipa-endeavouros-builder -t 'pipa-endeavouros-builder'
    ```
-   *Note: This step builds all the device-specific packages, including the custom Linux kernel, which may take some time.*
+   *Note: This step prepares the image builder. Device packages are fetched from the published `pipa-alarm` pacman repository by default instead of being built locally.*
 
 2. Build the Desktop Environment image (e.g. Plasma):
    ```bash
@@ -43,6 +43,7 @@ The output ZIP file(s) will be placed in the `images/` directory. Each build arc
 
 The builder uses a pacstrap-based rootfs flow inspired by [endeavouros-arm/plasma-image](https://github.com/endeavouros-arm/plasma-image), while the boot image artifact is sourced from the Mu-Silicium release used by [pocketblue](https://github.com/pocketblue/pocketblue).
 The generated GRUB configuration uses stable filesystem labels so recovery edits are less fragile after reflashing, and now redirects from the ESP into a dedicated `boot` filesystem instead of loading the kernel directly from the rootfs.
+The image builder installs the device packages from [maakiopus/pipa-alarm](https://maakiopus.github.io/pipa-alarm/repo/) by default; set `PIPA_REPO_URL` if you want to point it at a different published pacman repo.
 
 ## Flashing Instructions
 
