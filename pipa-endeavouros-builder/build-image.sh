@@ -234,7 +234,7 @@ configfile (\$boot)/grub2/grub.cfg
 EOF
 grub-mkstandalone \
     -O arm64-efi \
-    --modules="part_gpt part_msdos fat ext2 normal search search_label configfile linux gzio efi_gop efi_uga all_video" \
+    --modules="part_gpt part_msdos fat ext2 normal search search_label configfile linux gzio efi_gop" \
     -o "$ESP_MNT/EFI/BOOT/BOOTAA64.EFI" \
     "boot/grub/grub.cfg=$IMAGE_DIR/$IMAGE_NAME/grub-embedded.cfg"
 cat > "$ESP_MNT/EFI/BOOT/grub.cfg" <<EOF
