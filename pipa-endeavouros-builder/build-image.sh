@@ -237,7 +237,8 @@ echo "### Creating EFI system partition image..."
 truncate -s "${ESP_SIZE_MB}M" "$IMAGE_DIR/$IMAGE_NAME/endeavouros_esp.raw"
 mkfs.fat -F 16 -n "$ESP_LABEL" "$IMAGE_DIR/$IMAGE_NAME/endeavouros_esp.raw"
 mount -o loop "$IMAGE_DIR/$IMAGE_NAME/endeavouros_esp.raw" "$ESP_MNT"
-cp -a "$EFI_TEMPLATE_DIR/EFI" "$ESP_MNT/"
+# FAT cannot store Unix ownership, so avoid archive mode here.
+cp -r "$EFI_TEMPLATE_DIR/EFI" "$ESP_MNT/"
 cat > "$ESP_MNT/EFI/BOOT/grub.cfg" <<EOF
 search --no-floppy --label --set=boot $BOOT_LABEL
 set prefix=(\$boot)/grub2
