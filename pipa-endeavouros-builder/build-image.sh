@@ -275,8 +275,12 @@ mkdir -p "$BOOT_MNT/boot/devicetree" "$BOOT_MNT/grub2" "$BOOT_MNT/efi"
 cp "$KERNEL_IMAGE" "$BOOT_MNT/boot/"
 cp "$KERNEL_IMAGE_DTB" "$BOOT_MNT/boot/"
 cp "$INITRAMFS_IMAGE" "$BOOT_MNT/boot/"
-cp "$ROOTFS_DIR/boot/System.map-$KERNEL_VER" "$BOOT_MNT/boot/"
-cp "$ROOTFS_DIR/boot/config-$KERNEL_VER" "$BOOT_MNT/boot/"
+if [ -f "$ROOTFS_DIR/boot/System.map-$KERNEL_VER" ]; then
+    cp "$ROOTFS_DIR/boot/System.map-$KERNEL_VER" "$BOOT_MNT/boot/"
+fi
+if [ -f "$ROOTFS_DIR/boot/config-$KERNEL_VER" ]; then
+    cp "$ROOTFS_DIR/boot/config-$KERNEL_VER" "$BOOT_MNT/boot/"
+fi
 cp "$DTB_IMAGE" "$BOOT_MNT/boot/devicetree/"
 if [ -f "$KERNEL_IMAGE_UNCOMPRESSED" ]; then
     cp "$KERNEL_IMAGE_UNCOMPRESSED" "$BOOT_MNT/boot/"
