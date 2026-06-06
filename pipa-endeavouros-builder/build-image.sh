@@ -43,6 +43,17 @@ mkdir -p "$IMAGE_DIR/$IMAGE_NAME" "$IMAGE_MNT" "$ESP_MNT" "$BOOT_MNT"
 rm -rf "$ROOTFS_DIR"
 mkdir -p "$ROOTFS_DIR"
 
+first_existing_file() {
+    local candidate
+    for candidate in "$@"; do
+        if [ -f "$candidate" ]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
 if [ ! -f "$EFI_TEMPLATE_DIR/EFI/BOOT/BOOTAA64.EFI" ] || [ ! -f "$EFI_TEMPLATE_DIR/EFI/endeavour/grubaa64.efi" ]; then
     echo "Missing Endeavour-style EFI template files in $EFI_TEMPLATE_DIR"
     exit 1
@@ -139,12 +150,39 @@ echo "### Writing target pacman configuration..."
 cp "$PACMAN_CONF" "$ROOTFS_DIR/etc/pacman.conf"
 
 KERNEL_VER=$(find "$ROOTFS_DIR/usr/lib/modules" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | head -n 1)
-KERNEL_IMAGE="$ROOTFS_DIR/boot/vmlinuz-$KERNEL_VER"
-KERNEL_IMAGE_UNCOMPRESSED="$ROOTFS_DIR/boot/vmlinuz-$KERNEL_VER.uncompressed"
-KERNEL_IMAGE_DTB="$ROOTFS_DIR/boot/vmlinuz-$KERNEL_VER.dtb"
-KERNEL_IMAGE_UNCOMPRESSED_DTB="$ROOTFS_DIR/boot/vmlinuz-$KERNEL_VER.uncompressed.dtb"
-INITRAMFS_IMAGE="$ROOTFS_DIR/boot/initramfs-$KERNEL_VER.img"
-DTB_IMAGE="$ROOTFS_DIR/usr/lib/modules/$KERNEL_VER/devicetree/sm8250-xiaomi-pipa.dtb"
+KERNEL_IMAGE="$(first_existing_file \
+    "$ROOTFS_DIR/boot/Image.gz" \
+    "$ROOTFS_DIR/boot/vmlinuz-$KERNEL_VER" \
+)"
+KERNEL_IMAGE_UNCOMPRESSED="$(first_existing_file \
+    "$ROOTFS_DIR/boot/Image" \
+    "$ROOTFS_DIR/boot/vmlinuz-$KERNEL_VER.uncompressed" \
+    || true \
+)"
+KERNEL_IMAGE_DTB="$ROOTFS_DIR/boot/$(basename "$KERNEL_IMAGE").dtb"
+if [ -n "${KERNEL_IMAGE_UNCOMPRESSED:-}" ]; then
+    KERNEL_IMAGE_UNCOMPRESSED_DTB="$ROOTFS_DIR/boot/$(basename "$KERNEL_IMAGE_UNCOMPRESSED").dtb"
+else
+    KERNEL_IMAGE_UNCOMPRESSED_DTB=""
+fi
+INITRAMFS_IMAGE="$(first_existing_file \
+    "$ROOTFS_DIR/boot/initramfs-$KERNEL_VER.img" \
+    "$ROOTFS_DIR/boot/initramfs.img" \
+)"
+DTB_IMAGE="$(first_existing_file \
+    "$ROOTFS_DIR/boot/dtbs/qcom/sm8250-xiaomi-pipa.dtb" \
+    "$ROOTFS_DIR/usr/lib/modules/$KERNEL_VER/devicetree/sm8250-xiaomi-pipa.dtb" \
+)"
+
+if [ -z "${KERNEL_IMAGE:-}" ] || [ ! -f "$KERNEL_IMAGE" ]; then
+    echo "Kernel image was not found in the target rootfs for $KERNEL_VER" >&2
+    exit 1
+fi
+
+if [ -z "${DTB_IMAGE:-}" ] || [ ! -f "$DTB_IMAGE" ]; then
+    echo "Device tree was not found in the target rootfs for $KERNEL_VER" >&2
+    exit 1
+fi
 
 echo "### Preparing initramfs configuration..."
 echo 'LANG=C.UTF-8' > "$ROOTFS_DIR/etc/locale.conf"
@@ -164,10 +202,6 @@ else
     exit 1
 fi
 
-if [ ! -f "$INITRAMFS_IMAGE" ] && [ -f "$ROOTFS_DIR/boot/initramfs.img" ]; then
-    INITRAMFS_IMAGE="$ROOTFS_DIR/boot/initramfs.img"
-fi
-
 if [ ! -f "$INITRAMFS_IMAGE" ]; then
     echo "Initramfs image was not generated for $KERNEL_VER" >&2
     exit 1
@@ -175,7 +209,7 @@ fi
 
 echo "### Preparing kernel+dtb images..."
 cat "$KERNEL_IMAGE" "$DTB_IMAGE" > "$KERNEL_IMAGE_DTB"
-if [ -f "$KERNEL_IMAGE_UNCOMPRESSED" ]; then
+if [ -n "${KERNEL_IMAGE_UNCOMPRESSED:-}" ] && [ -f "$KERNEL_IMAGE_UNCOMPRESSED" ]; then
     cat "$KERNEL_IMAGE_UNCOMPRESSED" "$DTB_IMAGE" > "$KERNEL_IMAGE_UNCOMPRESSED_DTB"
 fi
 
