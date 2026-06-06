@@ -1,6 +1,6 @@
 pkgname=rmtfs
 pkgver=1.0
-pkgrel=1
+pkgrel=2
 pkgdesc="Qualcomm Remote Filesystem Service"
 arch=('aarch64')
 url="https://github.com/linux-msm/rmtfs"
@@ -14,10 +14,13 @@ md5sums=('SKIP')
 
 build() {
   cd "$srcdir/$pkgname"
+  # Upstream ships generated QMI sources already; avoid requiring qmic in the builder.
+  touch qmi_rmtfs.c qmi_rmtfs.h
   make prefix=/usr
 }
 
 package() {
   cd "$srcdir/$pkgname"
+  touch qmi_rmtfs.c qmi_rmtfs.h
   make DESTDIR="$pkgdir" prefix=/usr install
 }
