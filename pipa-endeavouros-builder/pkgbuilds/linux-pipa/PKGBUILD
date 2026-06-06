@@ -3,7 +3,7 @@ pkgname=(linux-pipa linux-pipa-headers)
 _srcname=linux
 _commit=e44fc0623eaae5c65024d17e5c0913dea611b75a
 pkgver=7.0.11
-pkgrel=1
+pkgrel=2
 pkgdesc='Linux kernel for Xiaomi Pad 6 (Pipa)'
 arch=('aarch64')
 url="https://github.com/PipaDB/linux"
@@ -16,14 +16,11 @@ options=('!strip')
 source=(
   "linux-${_commit}.tar.gz::https://github.com/PipaDB/linux/archive/${_commit}.tar.gz"
   'pipa.config'
-  'add-touchpad-button-event.patch'
 )
-sha256sums=('SKIP' 'SKIP' 'SKIP')
+sha256sums=('SKIP' 'SKIP')
 
 prepare() {
   cd $_srcname-${_commit}
-
-  patch -p1 < ../add-touchpad-button-event.patch
   cp ../pipa.config .config
   
   make EXTRAVERSION="-${pkgrel}-pipa" olddefconfig
