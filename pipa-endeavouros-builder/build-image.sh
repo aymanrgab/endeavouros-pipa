@@ -18,6 +18,7 @@ ROOTFS_LABEL="eos-pipa"
 BOOT_LABEL="boot"
 ESP_LABEL="EOSPIPAESP"
 PACMAN_CONF="$(pwd)/pacman-pipa.conf"
+EFI_TEMPLATE_DIR="$(pwd)/efi-template"
 SILICIUM_URL="https://github.com/onesaladleaf/Mu-Silicium/releases/download/v3.5-pocketblue/Mu-pipa.img"
 SILICIUM_SHA256="ea3e1e123beea7ee5394295bdfee75054711d4734e9403831fda7f037fc900b6"
 ESP_SIZE_MB=128
@@ -49,6 +50,11 @@ if [ ${#LOCAL_PACKAGES[@]} -eq 0 ]; then
     exit 1
 fi
 
+if [ ! -f "$EFI_TEMPLATE_DIR/EFI/BOOT/BOOTAA64.EFI" ] || [ ! -f "$EFI_TEMPLATE_DIR/EFI/endeavour/grubaa64.efi" ]; then
+    echo "Missing Endeavour-style EFI template files in $EFI_TEMPLATE_DIR"
+    exit 1
+fi
+
 echo "### Preparing pacman configuration..."
 cp /etc/pacman.conf "$PACMAN_CONF"
 sed -i '/^DisableSandbox$/d' "$PACMAN_CONF"
@@ -66,7 +72,7 @@ EOF
 
 BASE_PACKAGES=(
     base base-devel sudo nano vim git wget rsync openssh lsb-release
-    networkmanager bluez bluez-utils iwd
+    networkmanager bluez-git iwd mesa
     pipewire pipewire-alsa pipewire-pulse pipewire-jack wireplumber
     power-profiles-daemon modemmanager xdg-user-dirs
     iptables noto-fonts qt6-virtualkeyboard
@@ -79,8 +85,12 @@ BASE_PACKAGES=(
 case "$DE_NAME" in
     plasma)
         DESKTOP_PACKAGES=(
-            plasma-desktop plasma-nm plasma-pa systemsettings
-            konsole dolphin sddm firefox xdg-desktop-portal-kde
+            plasma-meta sddm xdg-desktop-portal-kde
+            firefox flatpak
+            kdeconnect discover konsole dolphin ark filelight
+            gwenview okular spectacle elisa kate kcalc kalk
+            plasma-browser-integration plasma-systemmonitor
+            qt6-multimedia-ffmpeg
         )
         DISPLAY_MANAGER="sddm"
         ;;
@@ -145,6 +155,7 @@ arch-chroot "$ROOTFS_DIR" systemctl enable "$DISPLAY_MANAGER"
 arch-chroot "$ROOTFS_DIR" systemctl enable NetworkManager sshd bluetooth systemd-resolved
 arch-chroot "$ROOTFS_DIR" systemctl enable bootmac-bluetooth || true
 arch-chroot "$ROOTFS_DIR" systemctl enable qrtr-ns pd-mapper rmtfs tqftpserv || true
+arch-chroot "$ROOTFS_DIR" systemctl enable hexagonrpcd-sdsp hexagonrpcd-adsp-rootpd hexagonrpcd-adsp-sensorspd iio-sensor-proxy || true
 
 echo "### Configuring SDDM for Touch/Wayland..."
 if [ "$DE_NAME" = "plasma" ]; then
@@ -226,21 +237,36 @@ echo "### Creating EFI system partition image..."
 truncate -s "${ESP_SIZE_MB}M" "$IMAGE_DIR/$IMAGE_NAME/endeavouros_esp.raw"
 mkfs.fat -F 16 -n "$ESP_LABEL" "$IMAGE_DIR/$IMAGE_NAME/endeavouros_esp.raw"
 mount -o loop "$IMAGE_DIR/$IMAGE_NAME/endeavouros_esp.raw" "$ESP_MNT"
-mkdir -p "$ESP_MNT/EFI/BOOT"
-cat > "$IMAGE_DIR/$IMAGE_NAME/grub-embedded.cfg" <<EOF
-search --no-floppy --label --set=boot $BOOT_LABEL
-set prefix=(\$boot)/grub2
-configfile (\$boot)/grub2/grub.cfg
-EOF
-grub-mkstandalone \
-    -O arm64-efi \
-    --modules="part_gpt part_msdos fat ext2 normal search search_label configfile linux gzio efi_gop" \
-    -o "$ESP_MNT/EFI/BOOT/BOOTAA64.EFI" \
-    "boot/grub/grub.cfg=$IMAGE_DIR/$IMAGE_NAME/grub-embedded.cfg"
+cp -a "$EFI_TEMPLATE_DIR/EFI" "$ESP_MNT/"
 cat > "$ESP_MNT/EFI/BOOT/grub.cfg" <<EOF
 search --no-floppy --label --set=boot $BOOT_LABEL
 set prefix=(\$boot)/grub2
 configfile (\$boot)/grub2/grub.cfg
+EOF
+cat > "$ESP_MNT/EFI/endeavour/grub.cfg" <<EOF
+if [ -e (md/md-boot) ]; then
+  set prefix=md/md-boot
+else
+  if [ -f \${config_directory}/bootuuid.cfg ]; then
+    source \${config_directory}/bootuuid.cfg
+  fi
+  if [ -n "\${BOOT_UUID}" ]; then
+    search --fs-uuid "\${BOOT_UUID}" --set prefix --no-floppy
+  else
+    search --label $BOOT_LABEL --set prefix --no-floppy
+  fi
+fi
+if [ -d (\$prefix)/grub2 ]; then
+  set prefix=(\$prefix)/grub2
+  configfile \$prefix/grub.cfg
+else
+  set prefix=(\$prefix)/boot/grub2
+  configfile \$prefix/grub.cfg
+fi
+boot
+EOF
+cat > "$ESP_MNT/EFI/endeavour/bootuuid.cfg" <<EOF
+set BOOT_UUID=""
 EOF
 umount "$ESP_MNT"
 

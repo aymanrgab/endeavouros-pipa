@@ -8,6 +8,7 @@ PKGS=(
   "qbootctl"
   "xiaomi-pipa-firmware"
   "alsa-ucm-conf-sm8250"
+  "bluez-git"
   "bootmac"
   "hexagonrpc"
   "libssc"
@@ -29,7 +30,8 @@ pacman -Syu --needed --noconfirm \
   arch-install-scripts e2fsprogs dosfstools zip unzip \
   bc bison flex cpio kmod python tar xz meson ninja cmake rsync wget \
   glib2 libgudev polkit libqmi protobuf-c qrtr dracut android-tools \
-  pahole gtk-doc umockdev
+  pahole gtk-doc umockdev alsa-lib dbus ell json-c libical readline \
+  python-docutils python-pygments autoconf automake libtool
 
 # Create a local repo
 REPO_DIR="/repo"

@@ -1,11 +1,11 @@
 pkgname=iio-sensor-proxy-pipa
 pkgver=3.7
-pkgrel=1
+pkgrel=2
 pkgdesc="IIO accelerometer sensor to input device proxy (with libssc support)"
 arch=('x86_64' 'aarch64')
 url="https://gitlab.freedesktop.org/hadess/iio-sensor-proxy"
 license=('GPL3')
-depends=('glib2' 'libgudev' 'polkit' 'libssc')
+depends=('dbus' 'glib2' 'hexagonrpc' 'libgudev' 'libssc' 'polkit' 'systemd')
 makedepends=('meson' 'gcc' 'gtk-doc' 'umockdev')
 provides=('iio-sensor-proxy')
 conflicts=('iio-sensor-proxy')
@@ -43,4 +43,22 @@ build() {
 package() {
   cd "iio-sensor-proxy-$pkgver"
   DESTDIR="$pkgdir" ninja -C build install
+
+  install -d "$pkgdir/usr/lib/systemd/system/iio-sensor-proxy.service.d"
+  cat > "$pkgdir/usr/lib/systemd/system/iio-sensor-proxy.service.d/hexagonrpcd.conf" <<'EOF'
+[Unit]
+Wants=hexagonrpcd-adsp-rootpd.service
+Wants=hexagonrpcd-adsp-sensorspd.service
+Wants=hexagonrpcd-sdsp.service
+After=hexagonrpcd-adsp-rootpd.service
+After=hexagonrpcd-adsp-sensorspd.service
+After=hexagonrpcd-sdsp.service
+EOF
+
+  install -d "$pkgdir/etc/systemd/system/iio-sensor-proxy.service.d"
+  cat > "$pkgdir/etc/systemd/system/iio-sensor-proxy.service.d/override.conf" <<'EOF'
+[Service]
+Restart=always
+RestartSec=5
+EOF
 }
