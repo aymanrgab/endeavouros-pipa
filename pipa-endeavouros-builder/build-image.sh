@@ -102,7 +102,7 @@ PIPA_REPO_PACKAGES=(
     qbootctl
     swclock-offset
     widevine
-    wine-aarch64-hangover
+    wine-aarch64
 )
 
 case "$DE_NAME" in
