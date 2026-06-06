@@ -69,7 +69,7 @@ BASE_PACKAGES=(
     networkmanager bluez bluez-utils iwd
     pipewire pipewire-alsa pipewire-pulse pipewire-jack wireplumber
     power-profiles-daemon modemmanager xdg-user-dirs
-    iptables noto-fonts maliit-keyboard
+    iptables noto-fonts qt6-virtualkeyboard
     grub
     endeavouros-keyring endeavouros-mirrorlist endeavouros-theming
     eos-hooks eos-update-notifier welcome
@@ -152,10 +152,11 @@ if [ "$DE_NAME" = "plasma" ]; then
     cat > "$ROOTFS_DIR/etc/sddm.conf.d/10-wayland.conf" <<EOF
 [General]
 DisplayServer=wayland
-InputMethod=maliit
+InputMethod=qtvirtualkeyboard
+GreeterEnvironment=QT_WAYLAND_SHELL_INTEGRATION=layer-shell
 
 [Wayland]
-CompositorCommand=kwin_wayland --drm --no-lockscreen --no-global-shortcuts --locale1
+CompositorCommand=kwin_wayland --drm --no-lockscreen --no-global-shortcuts --locale1 --inputmethod qtvirtualkeyboard
 
 [Theme]
 Current=breeze
