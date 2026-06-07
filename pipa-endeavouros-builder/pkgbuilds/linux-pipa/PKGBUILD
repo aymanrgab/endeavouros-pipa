@@ -40,11 +40,14 @@ package_linux-pipa() {
   
   local kernver="$(make EXTRAVERSION="-${pkgrel}-pipa" kernelrelease)"
 
-  mkdir -p "$pkgdir/boot"
+  mkdir -p "$pkgdir/boot/dtbs/qcom"
   cp arch/arm64/boot/Image.gz "$pkgdir/boot/vmlinuz-$kernver"
   cp arch/arm64/boot/Image "$pkgdir/boot/vmlinuz-$kernver.uncompressed"
+  cp arch/arm64/boot/Image.gz "$pkgdir/boot/Image.gz"
+  cp arch/arm64/boot/Image "$pkgdir/boot/Image"
   cp System.map "$pkgdir/boot/System.map-$kernver"
   cp .config "$pkgdir/boot/config-$kernver"
+  cp arch/arm64/boot/dts/qcom/sm8250-xiaomi-pipa.dtb "$pkgdir/boot/dtbs/qcom/"
 
   make EXTRAVERSION="-${pkgrel}-pipa" INSTALL_MOD_PATH="$pkgdir/usr" modules_install
   
