@@ -269,7 +269,6 @@ PIPA_REPO_PACKAGES=(
     linux-firmware-pipa-venus
     mangohud-git
     mkbootimg-pipa
-    pipa-kernel-hooks
     qbootctl
     swclock-offset
     widevine
