@@ -19,11 +19,19 @@ BOOT_LABEL="boot"
 ESP_LABEL="EOSPIPAESP"
 PACMAN_CONF="$(pwd)/pacman-pipa.conf"
 EFI_TEMPLATE_DIR="$(pwd)/efi-template"
+LOCAL_PKG_DIR="$(pwd)/pkgbuilds"
+LOCAL_REPO_DIR="$(pwd)/local-repo"
 PIPA_REPO_URL="${PIPA_REPO_URL:-https://maakiopus.github.io/pipa-alarm/repo/}"
 SILICIUM_URL="https://github.com/onesaladleaf/Mu-Silicium/releases/download/v3.5-pocketblue/Mu-pipa.img"
 SILICIUM_SHA256="ea3e1e123beea7ee5394295bdfee75054711d4734e9403831fda7f037fc900b6"
 ESP_SIZE_MB=128
 BOOT_SIZE_MB=1024
+LOCAL_RUNTIME_PACKAGES=(
+    qrtr
+    rmtfs
+    tqftpserv
+    pd-mapper
+)
 
 cleanup() {
     if mountpoint -q "$IMAGE_MNT"; then
@@ -54,16 +62,75 @@ first_existing_file() {
     return 1
 }
 
+prepare_local_repo() {
+    local makepkg_user="${SUDO_USER:-builder}"
+    local pkg pkg_dir built_packages package_path
+
+    if ! id -u "$makepkg_user" >/dev/null 2>&1; then
+        useradd -m "$makepkg_user"
+    fi
+
+    install -d -m 0755 "$LOCAL_REPO_DIR"
+    chown -R "$makepkg_user:$makepkg_user" "$LOCAL_REPO_DIR"
+    rm -f "$LOCAL_REPO_DIR"/*.pkg.tar.* "$LOCAL_REPO_DIR"/pipa-local.db* "$LOCAL_REPO_DIR"/pipa-local.files*
+
+    for pkg in "${LOCAL_RUNTIME_PACKAGES[@]}"; do
+        pkg_dir="$LOCAL_PKG_DIR/$pkg"
+        echo "### Building local runtime package: $pkg"
+        chown -R "$makepkg_user:$makepkg_user" "$pkg_dir"
+        su "$makepkg_user" -c "cd '$pkg_dir' && rm -f ./*.pkg.tar.* && makepkg --nodeps --noconfirm --nocheck"
+
+        built_packages=()
+        shopt -s nullglob
+        for package_path in "$pkg_dir"/*.pkg.tar.zst "$pkg_dir"/*.pkg.tar.xz; do
+            case "$(basename "$package_path")" in
+                *-debug-*.pkg.tar.*|*-headers-*.pkg.tar.*) ;;
+                *) built_packages+=("$package_path") ;;
+            esac
+        done
+        shopt -u nullglob
+
+        if [ ${#built_packages[@]} -eq 0 ]; then
+            echo "No package archives were produced for $pkg in $pkg_dir" >&2
+            exit 1
+        fi
+
+        cp "${built_packages[@]}" "$LOCAL_REPO_DIR/"
+        repo-add "$LOCAL_REPO_DIR/pipa-local.db.tar.gz" "${built_packages[@]}"
+    done
+}
+
+write_uefi_csv() {
+    local csv_path="$1"
+    local entry_image="$2"
+    local title="$3"
+    local description="$4"
+
+    python - "$csv_path" "$entry_image" "$title" "$description" <<'PY'
+import pathlib
+import sys
+
+csv_path, entry_image, title, description = sys.argv[1:5]
+text = f"{entry_image},{title},,{description}\r\n"
+pathlib.Path(csv_path).write_bytes(b"\xff\xfe" + text.encode("utf-16le"))
+PY
+}
+
 if [ ! -f "$EFI_TEMPLATE_DIR/EFI/BOOT/BOOTAA64.EFI" ] || [ ! -f "$EFI_TEMPLATE_DIR/EFI/endeavour/grubaa64.efi" ]; then
     echo "Missing Endeavour-style EFI template files in $EFI_TEMPLATE_DIR"
     exit 1
 fi
 
 echo "### Preparing pacman configuration..."
+prepare_local_repo
 cp /etc/pacman.conf "$PACMAN_CONF"
 sed -i '/^DisableSandbox$/d' "$PACMAN_CONF"
 sed -i '/^\[options\]$/a DisableSandbox' "$PACMAN_CONF"
 cat <<EOF >> "$PACMAN_CONF"
+
+[pipa-local]
+SigLevel = Optional TrustAll
+Server = file://$LOCAL_REPO_DIR
 
 [pipa-alarm]
 SigLevel = Optional TrustAll
@@ -77,9 +144,12 @@ EOF
 BASE_PACKAGES=(
     base base-devel sudo nano vim git wget rsync openssh lsb-release
     networkmanager iwd mesa
+    archlinuxarm-keyring
+    alsa-ucm-conf alsa-utils
     pipewire pipewire-alsa pipewire-pulse pipewire-jack wireplumber
     power-profiles-daemon modemmanager xdg-user-dirs
     iptables noto-fonts qt6-virtualkeyboard
+    fish fastfetch
     grub
     endeavouros-keyring endeavouros-mirrorlist endeavouros-theming
     eos-hooks eos-update-notifier welcome
@@ -116,17 +186,21 @@ PIPA_REPO_PACKAGES=(
     wine-aarch64
 )
 
+LOCAL_IMAGE_PACKAGES=(
+    "${LOCAL_RUNTIME_PACKAGES[@]}"
+)
+
 case "$DE_NAME" in
     plasma)
         DESKTOP_PACKAGES=(
-            plasma-meta sddm xdg-desktop-portal-kde
+            plasma-meta plasma-login-manager plasma-keyboard xdg-desktop-portal-kde
             firefox flatpak
             kdeconnect discover konsole dolphin ark filelight
             gwenview okular spectacle elisa kate kcalc kalk
             plasma-browser-integration plasma-systemmonitor
             qt6-multimedia-ffmpeg
         )
-        DISPLAY_MANAGER="sddm"
+        DISPLAY_MANAGER="plasmalogin"
         ;;
     gnome)
         DESKTOP_PACKAGES=(
@@ -144,10 +218,64 @@ case "$DE_NAME" in
 esac
 
 echo "### Bootstrapping rootfs with pacstrap..."
-pacstrap -C "$PACMAN_CONF" -KGM "$ROOTFS_DIR" "${BASE_PACKAGES[@]}" "${PIPA_REPO_PACKAGES[@]}" "${DESKTOP_PACKAGES[@]}"
+pacstrap -C "$PACMAN_CONF" -KGM "$ROOTFS_DIR" "${BASE_PACKAGES[@]}" "${PIPA_REPO_PACKAGES[@]}" "${LOCAL_IMAGE_PACKAGES[@]}" "${DESKTOP_PACKAGES[@]}"
 
 echo "### Writing target pacman configuration..."
 cp "$PACMAN_CONF" "$ROOTFS_DIR/etc/pacman.conf"
+
+echo "### Installing local Pipa audio configuration..."
+install -Dm644 \
+    "$LOCAL_PKG_DIR/alsa-ucm-conf-sm8250/Xiaomi Pad 6.conf" \
+    "$ROOTFS_DIR/usr/share/alsa/ucm2/conf.d/sm8250/Xiaomi Pad 6.conf"
+install -Dm644 \
+    "$LOCAL_PKG_DIR/alsa-ucm-conf-sm8250/HiFi_pipa.conf" \
+    "$ROOTFS_DIR/usr/share/alsa/ucm2/Qualcomm/sm8250/HiFi_pipa.conf"
+install -Dm644 \
+    "$LOCAL_PKG_DIR/pipa-sound-conf/51-pipa.conf" \
+    "$ROOTFS_DIR/usr/share/wireplumber/wireplumber.conf.d/51-pipa.conf"
+ln -sf "Xiaomi Pad 6.conf" \
+    "$ROOTFS_DIR/usr/share/alsa/ucm2/conf.d/sm8250/sm8250.conf"
+ln -sf "Xiaomi Pad 6.conf" \
+    "$ROOTFS_DIR/usr/share/alsa/ucm2/conf.d/sm8250/Xiaomi-Pad6-pipa-M82.conf"
+install -Dm644 /dev/stdin "$ROOTFS_DIR/etc/systemd/system/iio-sensor-proxy.service.d/10-pipa-audio.conf" <<'EOF'
+[Unit]
+Wants=
+After=
+Wants=hexagonrpcd-adsp-rootpd.service
+Wants=hexagonrpcd-sdsp.service
+After=hexagonrpcd-adsp-rootpd.service
+After=hexagonrpcd-sdsp.service
+EOF
+
+install -Dm755 /dev/stdin "$ROOTFS_DIR/usr/local/bin/pipa-audio-init" <<'EOF'
+#!/bin/sh
+set -eu
+
+for _ in $(seq 1 20); do
+    if [ -r /proc/asound/cards ] && ! grep -q '^--- no soundcards ---$' /proc/asound/cards; then
+        break
+    fi
+    sleep 1
+done
+
+alsactl init 0 || true
+EOF
+
+install -Dm644 /dev/stdin "$ROOTFS_DIR/usr/lib/systemd/system/pipa-audio-init.service" <<'EOF'
+[Unit]
+Description=Initialize Xiaomi Pad 6 ALSA state
+After=systemd-udev-settle.service pd-mapper.service rmtfs.service tqftpserv.service hexagonrpcd-adsp-rootpd.service hexagonrpcd-sdsp.service
+Wants=systemd-udev-settle.service pd-mapper.service rmtfs.service tqftpserv.service hexagonrpcd-adsp-rootpd.service hexagonrpcd-sdsp.service
+Before=display-manager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/pipa-audio-init
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
 
 KERNEL_VER=$(find "$ROOTFS_DIR/usr/lib/modules" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | head -n 1)
 KERNEL_IMAGE="$(first_existing_file \
@@ -224,31 +352,64 @@ EOF
 
 echo "### Configuring system services..."
 arch-chroot "$ROOTFS_DIR" systemctl enable "$DISPLAY_MANAGER"
-arch-chroot "$ROOTFS_DIR" systemctl enable NetworkManager sshd bluetooth systemd-resolved
+arch-chroot "$ROOTFS_DIR" systemctl enable NetworkManager sshd bluetooth systemd-resolved systemd-timesyncd
 arch-chroot "$ROOTFS_DIR" systemctl enable bootmac-bluetooth || true
-arch-chroot "$ROOTFS_DIR" systemctl enable qrtr-ns pd-mapper rmtfs tqftpserv || true
-arch-chroot "$ROOTFS_DIR" systemctl enable hexagonrpcd-sdsp hexagonrpcd-adsp-rootpd hexagonrpcd-adsp-sensorspd iio-sensor-proxy || true
+arch-chroot "$ROOTFS_DIR" systemctl enable pd-mapper rmtfs tqftpserv || true
+arch-chroot "$ROOTFS_DIR" systemctl enable hexagonrpcd-sdsp hexagonrpcd-adsp-rootpd iio-sensor-proxy pipa-audio-init || true
+arch-chroot "$ROOTFS_DIR" systemctl mask hexagonrpcd-adsp-sensorspd || true
 
-echo "### Configuring SDDM for Touch/Wayland..."
+echo "### Configuring Plasma login and virtual keyboard defaults..."
 if [ "$DE_NAME" = "plasma" ]; then
-    mkdir -p "$ROOTFS_DIR/etc/sddm.conf.d"
-    cat > "$ROOTFS_DIR/etc/sddm.conf.d/10-wayland.conf" <<EOF
-[General]
-DisplayServer=wayland
-InputMethod=qtvirtualkeyboard
-GreeterEnvironment=QT_WAYLAND_SHELL_INTEGRATION=layer-shell
+    mkdir -p "$ROOTFS_DIR/etc/environment.d"
+    cat > "$ROOTFS_DIR/etc/environment.d/90-plasma-keyboard.conf" <<EOF
+KWIN_IM_SHOW_ALWAYS=1
+PLASMA_KEYBOARD_USE_QT_LAYOUTS=1
+EOF
 
+    arch-chroot "$ROOTFS_DIR" sh -eu <<'EOF'
+desktop_file=""
+for candidate in \
+    /usr/share/applications/org.kde.plasma.keyboard.desktop \
+    /usr/share/applications/org.kde.plasma-keyboard.desktop \
+    /usr/share/applications/plasma-keyboard.desktop
+do
+    if [ -f "$candidate" ]; then
+        desktop_file="$candidate"
+        break
+    fi
+done
+
+if [ -z "$desktop_file" ]; then
+    desktop_file="$(grep -rl '^X-KDE-Wayland-VirtualKeyboard=true' /usr/share/applications 2>/dev/null | grep 'plasma' | head -n 1 || true)"
+fi
+
+for config_root in /root /etc/skel; do
+    install -d "$config_root/.config"
+    cat > "$config_root/.config/kwinrc" <<CONFIG
 [Wayland]
-CompositorCommand=kwin_wayland --drm --no-lockscreen --no-global-shortcuts --locale1 --inputmethod qtvirtualkeyboard
-
-[Theme]
-Current=breeze
+InputMethod=$desktop_file
+CONFIG
+done
 EOF
 fi
 
-echo "### Creating user..."
-arch-chroot "$ROOTFS_DIR" useradd -m -G audio,video,wheel,storage -s /bin/bash user || true
-echo 'user:147147' | arch-chroot "$ROOTFS_DIR" chpasswd
+echo "### Configuring fish shell defaults..."
+for config_root in /root /etc/skel; do
+    install -d "$config_root/.config/fish"
+    cat > "$config_root/.config/fish/config.fish" <<'EOF'
+if status is-interactive
+    if test "$SHLVL" = 1
+        if command -q fastfetch
+            fastfetch
+        end
+    end
+end
+EOF
+done
+arch-chroot "$ROOTFS_DIR" usermod -s /usr/bin/fish root
+arch-chroot "$ROOTFS_DIR" useradd -D -s /usr/bin/fish
+
+echo "### Setting root password..."
 echo 'root:root' | arch-chroot "$ROOTFS_DIR" chpasswd
 
 echo "### Configuring sudo..."
@@ -269,7 +430,7 @@ EOF
 
 echo "### Creating dedicated boot image..."
 truncate -s "${BOOT_SIZE_MB}M" "$IMAGE_DIR/$IMAGE_NAME/endeavouros_boot.raw"
-mkfs.ext4 -F -L "$BOOT_LABEL" "$IMAGE_DIR/$IMAGE_NAME/endeavouros_boot.raw"
+mkfs.ext4 -F -L "$BOOT_LABEL" -O ^64bit,^metadata_csum,^metadata_csum_seed,^orphan_file "$IMAGE_DIR/$IMAGE_NAME/endeavouros_boot.raw"
 mount -o loop "$IMAGE_DIR/$IMAGE_NAME/endeavouros_boot.raw" "$BOOT_MNT"
 mkdir -p "$BOOT_MNT/boot/devicetree" "$BOOT_MNT/grub2" "$BOOT_MNT/efi"
 cp "$KERNEL_IMAGE" "$BOOT_MNT/boot/"
@@ -317,14 +478,12 @@ mount -o loop "$IMAGE_DIR/$IMAGE_NAME/endeavouros_esp.raw" "$ESP_MNT"
 cp -r "$EFI_TEMPLATE_DIR/EFI" "$ESP_MNT/"
 mkdir -p "$ESP_MNT/EFI/fedora"
 cp -r "$ESP_MNT/EFI/endeavour/." "$ESP_MNT/EFI/fedora/"
-cat > "$ESP_MNT/EFI/BOOT/grub.cfg" <<EOF
-search --no-floppy --label --set=boot $BOOT_LABEL
-set prefix=(\$boot)/grub2
-configfile (\$boot)/grub2/grub.cfg
-EOF
 for shim_vendor in endeavour fedora; do
 cat > "$ESP_MNT/EFI/$shim_vendor/grub.cfg" <<EOF
 if [ -e (md/md-boot) ]; then
+  # The search command might pick a RAID component rather than the RAID,
+  # since the /boot RAID currently uses superblock 1.0.  See the comment in
+  # the main grub.cfg.
   set prefix=md/md-boot
 else
   if [ -f \${config_directory}/bootuuid.cfg ]; then
@@ -349,6 +508,16 @@ cat > "$ESP_MNT/EFI/$shim_vendor/bootuuid.cfg" <<EOF
 set BOOT_UUID=""
 EOF
 done
+write_uefi_csv \
+    "$ESP_MNT/EFI/fedora/BOOTAA64.CSV" \
+    "shimaa64.efi" \
+    "Fedora" \
+    "This is the boot entry for Fedora"
+write_uefi_csv \
+    "$ESP_MNT/EFI/endeavour/BOOTAA64.CSV" \
+    "shimaa64.efi" \
+    "EndeavourOS" \
+    "This is the boot entry for EndeavourOS"
 umount "$ESP_MNT"
 
 echo "### Creating root filesystem image..."
