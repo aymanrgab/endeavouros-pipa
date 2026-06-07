@@ -254,6 +254,7 @@ BASE_PACKAGES=(
     pipewire pipewire-alsa pipewire-pulse pipewire-jack wireplumber
     power-profiles-daemon upower modemmanager xdg-user-dirs
     iptables noto-fonts qt6-virtualkeyboard
+    dracut
     fish fastfetch
     grub
     endeavouros-keyring endeavouros-mirrorlist endeavouros-theming
