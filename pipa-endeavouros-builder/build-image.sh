@@ -308,13 +308,8 @@ case "$DE_NAME" in
         DISPLAY_MANAGER="plasmalogin"
         ;;
     gnome)
-        DESKTOP_PACKAGES=(
-            gdm gnome-shell gnome-session gnome-control-center
-            gnome-settings-daemon gnome-keyring gnome-terminal
-            gnome-tweaks nautilus gvfs xdg-desktop-portal-gnome
-            firefox
-        )
-        DISPLAY_MANAGER="gdm"
+        echo "GNOME builds are temporarily disabled. Use plasma for now."
+        exit 1
         ;;
     *)
         echo "Unsupported desktop environment: $DE_NAME"
