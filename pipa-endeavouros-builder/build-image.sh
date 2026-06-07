@@ -80,6 +80,19 @@ first_existing_dir() {
     return 1
 }
 
+write_placeholder_initramfs() {
+    local initramfs_path="$1"
+
+    python - "$initramfs_path" <<'PY'
+import gzip
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+path.write_bytes(gzip.compress(b"pipa placeholder initramfs\n"))
+PY
+}
+
 prepare_local_repo() {
     local makepkg_user="${SUDO_USER:-builder}"
     local pkg pkg_dir built_packages package_path install_packages
@@ -312,6 +325,7 @@ echo "### Seeding kernel cmdline for package hooks..."
 install -d "$ROOTFS_DIR/etc" "$ROOTFS_DIR/boot"
 printf '%s\n' "$TARGET_KERNEL_CMDLINE" > "$ROOTFS_DIR/etc/cmdline"
 printf '%s\n' "$TARGET_KERNEL_CMDLINE" > "$ROOTFS_DIR/boot/cmdline.txt"
+write_placeholder_initramfs "$ROOTFS_DIR/boot/initramfs.img"
 
 echo "### Bootstrapping rootfs with pacstrap..."
 pacstrap -C "$PACMAN_CONF" -KGM "$ROOTFS_DIR" "${BASE_PACKAGES[@]}" "${PIPA_REPO_PACKAGES[@]}" "${LOCAL_IMAGE_PACKAGES[@]}" "${DESKTOP_PACKAGES[@]}"
@@ -429,6 +443,10 @@ fi
 if [ ! -f "$INITRAMFS_IMAGE" ]; then
     echo "Initramfs image was not generated for $KERNEL_VER" >&2
     exit 1
+fi
+
+if [ "$INITRAMFS_IMAGE" != "$ROOTFS_DIR/boot/initramfs.img" ]; then
+    cp "$INITRAMFS_IMAGE" "$ROOTFS_DIR/boot/initramfs.img"
 fi
 
 echo "### Preparing kernel+dtb images..."
