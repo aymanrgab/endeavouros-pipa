@@ -17,6 +17,7 @@ IMAGE_NAME="endeavouros-pipa-${DE_NAME}-${DATE}"
 ROOTFS_LABEL="eos-pipa"
 BOOT_LABEL="boot"
 ESP_LABEL="EOSPIPAESP"
+TARGET_KERNEL_CMDLINE="root=LABEL=$ROOTFS_LABEL rw rootwait boot=LABEL=$BOOT_LABEL console=tty0 console=ttyS0 earlycon quiet splash"
 PACMAN_CONF="$(pwd)/pacman-pipa.conf"
 EFI_TEMPLATE_DIR="$(pwd)/efi-template"
 LOCAL_PKG_DIR="$(pwd)/pkgbuilds"
@@ -307,6 +308,11 @@ case "$DE_NAME" in
         ;;
 esac
 
+echo "### Seeding kernel cmdline for package hooks..."
+install -d "$ROOTFS_DIR/etc" "$ROOTFS_DIR/boot"
+printf '%s\n' "$TARGET_KERNEL_CMDLINE" > "$ROOTFS_DIR/etc/cmdline"
+printf '%s\n' "$TARGET_KERNEL_CMDLINE" > "$ROOTFS_DIR/boot/cmdline.txt"
+
 echo "### Bootstrapping rootfs with pacstrap..."
 pacstrap -C "$PACMAN_CONF" -KGM "$ROOTFS_DIR" "${BASE_PACKAGES[@]}" "${PIPA_REPO_PACKAGES[@]}" "${LOCAL_IMAGE_PACKAGES[@]}" "${DESKTOP_PACKAGES[@]}"
 
@@ -432,7 +438,7 @@ if [ -n "${KERNEL_IMAGE_UNCOMPRESSED:-}" ] && [ -f "$KERNEL_IMAGE_UNCOMPRESSED" 
 fi
 
 echo "### Setting up /etc/cmdline..."
-echo "root=LABEL=$ROOTFS_LABEL rw rootwait console=tty0 quiet splash" > "$ROOTFS_DIR/etc/cmdline"
+printf '%s\n' "$TARGET_KERNEL_CMDLINE" > "$ROOTFS_DIR/etc/cmdline"
 
 echo "### Setting up /etc/fstab..."
 cat > "$ROOTFS_DIR/etc/fstab" <<EOF
@@ -523,10 +529,12 @@ echo "### Creating dedicated boot image..."
 truncate -s "${BOOT_SIZE_MB}M" "$IMAGE_DIR/$IMAGE_NAME/endeavouros_boot.raw"
 mkfs.ext4 -F -L "$BOOT_LABEL" -O ^64bit,^metadata_csum,^metadata_csum_seed,^orphan_file "$IMAGE_DIR/$IMAGE_NAME/endeavouros_boot.raw"
 mount -o loop "$IMAGE_DIR/$IMAGE_NAME/endeavouros_boot.raw" "$BOOT_MNT"
-mkdir -p "$BOOT_MNT/boot/devicetree" "$BOOT_MNT/grub2/themes/endeavour" "$BOOT_MNT/efi"
+mkdir -p "$BOOT_MNT/boot/devicetree" "$BOOT_MNT/dtbs/qcom" "$BOOT_MNT/grub2/themes/endeavour" "$BOOT_MNT/efi"
 cp "$KERNEL_IMAGE" "$BOOT_MNT/boot/"
+cp "$KERNEL_IMAGE" "$BOOT_MNT/Image.gz"
 cp "$KERNEL_IMAGE_DTB" "$BOOT_MNT/boot/"
 cp "$INITRAMFS_IMAGE" "$BOOT_MNT/boot/"
+cp "$INITRAMFS_IMAGE" "$BOOT_MNT/initramfs.img"
 if [ -f "$ROOTFS_DIR/boot/System.map-$KERNEL_VER" ]; then
     cp "$ROOTFS_DIR/boot/System.map-$KERNEL_VER" "$BOOT_MNT/boot/"
 fi
@@ -534,12 +542,15 @@ if [ -f "$ROOTFS_DIR/boot/config-$KERNEL_VER" ]; then
     cp "$ROOTFS_DIR/boot/config-$KERNEL_VER" "$BOOT_MNT/boot/"
 fi
 cp "$DTB_IMAGE" "$BOOT_MNT/boot/devicetree/"
+cp "$DTB_IMAGE" "$BOOT_MNT/dtbs/qcom/"
 if [ -f "$KERNEL_IMAGE_UNCOMPRESSED" ]; then
     cp "$KERNEL_IMAGE_UNCOMPRESSED" "$BOOT_MNT/boot/"
+    cp "$KERNEL_IMAGE_UNCOMPRESSED" "$BOOT_MNT/Image"
 fi
 if [ -f "$KERNEL_IMAGE_UNCOMPRESSED_DTB" ]; then
     cp "$KERNEL_IMAGE_UNCOMPRESSED_DTB" "$BOOT_MNT/boot/"
 fi
+printf '%s\n' "$TARGET_KERNEL_CMDLINE" > "$BOOT_MNT/cmdline.txt"
 GRUB_THEME_SOURCE="$(first_existing_dir \
     "$ROOTFS_DIR/usr/share/grub/themes/EndeavourOS" \
     "$ROOTFS_DIR/usr/share/grub/themes/endeavouros" \
