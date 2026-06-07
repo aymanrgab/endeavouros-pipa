@@ -62,9 +62,20 @@ first_existing_file() {
     return 1
 }
 
+first_existing_dir() {
+    local candidate
+    for candidate in "$@"; do
+        if [ -d "$candidate" ]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
 prepare_local_repo() {
     local makepkg_user="${SUDO_USER:-builder}"
-    local pkg pkg_dir built_packages package_path
+    local pkg pkg_dir built_packages package_path install_packages
 
     if ! id -u "$makepkg_user" >/dev/null 2>&1; then
         useradd -m "$makepkg_user"
@@ -97,6 +108,18 @@ prepare_local_repo() {
 
         cp "${built_packages[@]}" "$LOCAL_REPO_DIR/"
         repo-add "$LOCAL_REPO_DIR/pipa-local.db.tar.gz" "${built_packages[@]}"
+
+        install_packages=()
+        for package_path in "${built_packages[@]}"; do
+            case "$(basename "$package_path")" in
+                *-debug-*.pkg.tar.*|*-headers-*.pkg.tar.*) ;;
+                *) install_packages+=("$package_path") ;;
+            esac
+        done
+
+        if [ ${#install_packages[@]} -gt 0 ]; then
+            pacman -U --noconfirm --ask=4 "${install_packages[@]}"
+        fi
     done
 }
 
@@ -113,6 +136,63 @@ import sys
 csv_path, entry_image, title, description = sys.argv[1:5]
 text = f"{entry_image},{title},,{description}\r\n"
 pathlib.Path(csv_path).write_bytes(b"\xff\xfe" + text.encode("utf-16le"))
+PY
+}
+
+write_grub_splash_png() {
+    local png_path="$1"
+
+    python - "$png_path" <<'PY'
+import pathlib
+import struct
+import zlib
+import sys
+
+png_path = pathlib.Path(sys.argv[1])
+width, height = 1280, 800
+
+def chunk(tag: bytes, data: bytes) -> bytes:
+    return (
+        struct.pack(">I", len(data))
+        + tag
+        + data
+        + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+    )
+
+rows = []
+for y in range(height):
+    row = bytearray([0])
+    for x in range(width):
+        mix = (x * 255) // max(width - 1, 1)
+        mix2 = (y * 255) // max(height - 1, 1)
+
+        r = 24 + (56 * mix) // 255 + (18 * mix2) // 255
+        g = 8 + (18 * mix) // 255
+        b = 48 + (110 * mix) // 255
+
+        # Soft diagonal highlight for a more Endeavour-like splash.
+        band = abs((x * 10 // width) - (y * 10 // height))
+        if band <= 1:
+            r = min(255, r + 18)
+            g = min(255, g + 10)
+            b = min(255, b + 24)
+
+        # Bottom glow bar to frame the menu area.
+        if y > height - 140:
+            glow = min(60, y - (height - 140))
+            r = min(255, r + glow // 2)
+            g = min(255, g + glow // 4)
+            b = min(255, b + glow)
+
+        row.extend((r, g, b))
+    rows.append(bytes(row))
+
+raw = b"".join(rows)
+png = b"\x89PNG\r\n\x1a\n"
+png += chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+png += chunk(b"IDAT", zlib.compress(raw, level=9))
+png += chunk(b"IEND", b"")
+png_path.write_bytes(png)
 PY
 }
 
@@ -353,6 +433,7 @@ EOF
 echo "### Configuring system services..."
 arch-chroot "$ROOTFS_DIR" systemctl enable "$DISPLAY_MANAGER"
 arch-chroot "$ROOTFS_DIR" systemctl enable NetworkManager sshd bluetooth systemd-resolved systemd-timesyncd
+arch-chroot "$ROOTFS_DIR" systemctl enable power-profiles-daemon
 arch-chroot "$ROOTFS_DIR" systemctl enable bootmac-bluetooth || true
 arch-chroot "$ROOTFS_DIR" systemctl enable pd-mapper rmtfs tqftpserv || true
 arch-chroot "$ROOTFS_DIR" systemctl enable hexagonrpcd-sdsp hexagonrpcd-adsp-rootpd iio-sensor-proxy pipa-audio-init || true
@@ -432,7 +513,7 @@ echo "### Creating dedicated boot image..."
 truncate -s "${BOOT_SIZE_MB}M" "$IMAGE_DIR/$IMAGE_NAME/endeavouros_boot.raw"
 mkfs.ext4 -F -L "$BOOT_LABEL" -O ^64bit,^metadata_csum,^metadata_csum_seed,^orphan_file "$IMAGE_DIR/$IMAGE_NAME/endeavouros_boot.raw"
 mount -o loop "$IMAGE_DIR/$IMAGE_NAME/endeavouros_boot.raw" "$BOOT_MNT"
-mkdir -p "$BOOT_MNT/boot/devicetree" "$BOOT_MNT/grub2" "$BOOT_MNT/efi"
+mkdir -p "$BOOT_MNT/boot/devicetree" "$BOOT_MNT/grub2/themes/endeavour" "$BOOT_MNT/efi"
 cp "$KERNEL_IMAGE" "$BOOT_MNT/boot/"
 cp "$KERNEL_IMAGE_DTB" "$BOOT_MNT/boot/"
 cp "$INITRAMFS_IMAGE" "$BOOT_MNT/boot/"
@@ -449,12 +530,49 @@ fi
 if [ -f "$KERNEL_IMAGE_UNCOMPRESSED_DTB" ]; then
     cp "$KERNEL_IMAGE_UNCOMPRESSED_DTB" "$BOOT_MNT/boot/"
 fi
+GRUB_THEME_SOURCE="$(first_existing_dir \
+    "$ROOTFS_DIR/usr/share/grub/themes/EndeavourOS" \
+    "$ROOTFS_DIR/usr/share/grub/themes/endeavouros" \
+    "$ROOTFS_DIR/boot/grub/themes/EndeavourOS" \
+    "$ROOTFS_DIR/boot/grub/themes/endeavouros" \
+    || true \
+)"
+GRUB_THEME_NAME=""
+if [ -n "$GRUB_THEME_SOURCE" ]; then
+    GRUB_THEME_NAME="$(basename "$GRUB_THEME_SOURCE")"
+    rm -rf "$BOOT_MNT/grub2/themes/$GRUB_THEME_NAME"
+    cp -r "$GRUB_THEME_SOURCE" "$BOOT_MNT/grub2/themes/"
+else
+    write_grub_splash_png "$BOOT_MNT/grub2/themes/endeavour/background.png"
+fi
 cat > "$BOOT_MNT/grub2/grub.cfg" <<EOF
 set default=0
 set timeout=5
 
 search --no-floppy --label --set=boot $BOOT_LABEL
 set root=(\$boot)
+
+if loadfont unicode; then
+    set gfxmode=auto
+    set gfxpayload=keep
+    terminal_output gfxterm
+fi
+EOF
+if [ -n "$GRUB_THEME_NAME" ] && [ -f "$BOOT_MNT/grub2/themes/$GRUB_THEME_NAME/theme.txt" ]; then
+cat >> "$BOOT_MNT/grub2/grub.cfg" <<EOF
+set theme=(\$boot)/grub2/themes/$GRUB_THEME_NAME/theme.txt
+EOF
+else
+cat >> "$BOOT_MNT/grub2/grub.cfg" <<EOF
+if background_image -m stretch (\$boot)/grub2/themes/endeavour/background.png; then
+    set color_normal=white/black
+    set color_highlight=black/light-cyan
+fi
+set menu_color_normal=white/black
+set menu_color_highlight=black/light-cyan
+EOF
+fi
+cat >> "$BOOT_MNT/grub2/grub.cfg" <<EOF
 
 menuentry "EndeavourOS ARM (Pipa)" {
     devicetree (\$boot)/boot/devicetree/sm8250-xiaomi-pipa.dtb
