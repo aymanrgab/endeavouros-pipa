@@ -31,6 +31,14 @@ GRUB_THEME_ARCHIVE_URL="${GRUB_THEME_ARCHIVE_URL:-https://codeload.github.com/En
 GRUB_GFXMODE="${GRUB_GFXMODE:-1280x800,1024x768,auto}"
 ESP_SIZE_MB=128
 BOOT_SIZE_MB=1024
+HOST_BUILD_PACKAGES=(
+    base-devel git sudo gcc make
+    arch-install-scripts e2fsprogs dosfstools zip unzip
+    bc bison flex cpio kmod python tar xz meson ninja cmake rsync wget
+    glib2 libgudev polkit libqmi protobuf-c qrtr dracut android-tools
+    pahole gtk-doc umockdev alsa-lib dbus ell json-c libical readline
+    python-docutils python-pygments autoconf automake libtool
+)
 LOCAL_REPO_BUILD_DIRS=(
     qrtr
     rmtfs
@@ -143,6 +151,9 @@ prepare_local_repo() {
     if ! id -u "$makepkg_user" >/dev/null 2>&1; then
         useradd -m "$makepkg_user"
     fi
+
+    echo "### Installing host build dependencies..."
+    pacman -S --needed --noconfirm "${HOST_BUILD_PACKAGES[@]}"
 
     install -d -m 0755 "$LOCAL_REPO_DIR"
     chown -R "$makepkg_user:$makepkg_user" "$LOCAL_REPO_DIR"
