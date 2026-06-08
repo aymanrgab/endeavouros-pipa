@@ -222,7 +222,6 @@ PIPA_REPO_PACKAGES=(
     gamescope
     hexagonrpc
     hexagonrpcd
-    iio-sensor-proxy-libssc
     iio-sensor-proxy-pipa
     libssc
     linux-firmware-pipa-adreno
