@@ -211,45 +211,19 @@ BASE_PACKAGES=(
     eos-hooks eos-update-notifier welcome
 )
 
-# Install the published Pipa device packages directly from the hosted repo.
-# Keep the list aligned with the packages currently published in pipa-pkgs.
+# Install the published Pipa packages directly from the hosted repo.
+# `pipa-metapkg` pulls the core tablet stack from the repo. Only list
+# additional repo packages here that do not overlap with that dependency set.
 PIPA_REPO_PACKAGES=(
-    alsa-ucm-conf-sm8250
-    bluez-git
-    bootmac
     box64
-    device-xiaomi-pipa
     gamescope
-    hexagonrpc
-    hexagonrpcd
-    iio-sensor-proxy-pipa
-    libssc
-    linux-firmware-pipa-adreno
-    linux-firmware-pipa-adsp
-    linux-firmware-pipa-awinic
-    linux-firmware-pipa-cdsp
-    linux-firmware-pipa-hexagonfs
-    linux-firmware-pipa-novatek
-    linux-firmware-pipa-nuvolta
-    linux-firmware-pipa-slpi
-    linux-firmware-pipa-venus
-    linux-pipa
     mangohud-git
     mkbootimg-pipa
-    pd-mapper
-    pipa-dracut
     pipa-kernel-flasher-hook
     pipa-kernel-hooks
     swclock-offset
-    pipa-sensors
-    pipa-sound-conf
-    qbootctl
-    qrtr
-    rmtfs
-    tqftpserv
     widevine
     wine-aarch64
-    xiaomi-pipa-firmware
 )
 
 case "$DE_NAME" in
