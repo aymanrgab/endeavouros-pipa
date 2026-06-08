@@ -220,7 +220,6 @@ PIPA_REPO_PACKAGES=(
     mangohud-git
     mkbootimg-pipa
     pipa-kernel-flasher-hook
-    pipa-kernel-hooks
     swclock-offset
     widevine
     wine-aarch64
