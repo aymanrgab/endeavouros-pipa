@@ -18,26 +18,45 @@ ROOTFS_LABEL="eos-pipa"
 BOOT_LABEL="boot"
 ESP_LABEL="EOSPIPAESP"
 TARGET_KERNEL_CMDLINE="root=LABEL=$ROOTFS_LABEL rw rootwait boot=LABEL=$BOOT_LABEL console=tty0 console=ttyS0 earlycon quiet splash"
+TARGET_KERNEL_DEBUG_CMDLINE="root=LABEL=$ROOTFS_LABEL rw rootwait boot=LABEL=$BOOT_LABEL console=tty0 console=ttyS0 earlycon ignore_loglevel loglevel=8 no_console_suspend rd.debug systemd.log_level=debug systemd.log_target=console plymouth.enable=0"
 PACMAN_CONF="$(pwd)/pacman-pipa.conf"
 EFI_TEMPLATE_DIR="$(pwd)/efi-template"
 LOCAL_PKG_DIR="$(pwd)/pkgbuilds"
 LOCAL_REPO_DIR="$(pwd)/local-repo"
 VBMETA_DISABLED_IMG="$(pwd)/vbmeta-disabled.img"
-PIPA_REPO_URL="${PIPA_REPO_URL:-https://maakiopus.github.io/pipa-alarm/repo/}"
+PIPA_REPO_URL="${PIPA_REPO_URL:-https://thespider2.github.io/pipa-pkgs/repo/}"
 SILICIUM_URL="https://github.com/onesaladleaf/Mu-Silicium/releases/download/v3.5-pocketblue/Mu-pipa.img"
 SILICIUM_SHA256="ea3e1e123beea7ee5394295bdfee75054711d4734e9403831fda7f037fc900b6"
 GRUB_THEME_ARCHIVE_URL="${GRUB_THEME_ARCHIVE_URL:-https://codeload.github.com/EndeavourOS-archive/grub2-theme-endeavouros/tar.gz/refs/heads/main}"
+GRUB_GFXMODE="${GRUB_GFXMODE:-1280x800,1024x768,auto}"
 ESP_SIZE_MB=128
 BOOT_SIZE_MB=1024
-LOCAL_RUNTIME_PACKAGES=(
+LOCAL_REPO_BUILD_DIRS=(
     qrtr
     rmtfs
     tqftpserv
     pd-mapper
-)
-LOCAL_REPO_PACKAGES=(
-    "${LOCAL_RUNTIME_PACKAGES[@]}"
+    qbootctl
+    xiaomi-pipa-firmware
+    pipa-dracut
+    bluez-git
+    bootmac
+    hexagonrpc
+    libssc
+    iio-sensor-proxy
+    pipa-sensors
+    pipa-sound-conf
+    alsa-ucm-conf-sm8250
     linux-pipa
+    pipa-metapkg
+)
+LOCAL_HOST_BUILD_SUPPORT_DIRS=(
+    qrtr
+    hexagonrpc
+    libssc
+)
+LOCAL_IMAGE_PACKAGES=(
+    pipa-metapkg
 )
 
 cleanup() {
@@ -80,6 +99,30 @@ first_existing_dir() {
     return 1
 }
 
+array_contains() {
+    local needle="$1"
+    shift
+
+    local item
+    for item in "$@"; do
+        if [ "$item" = "$needle" ]; then
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+assert_required_rootfs_files() {
+    local file_path
+    for file_path in "$@"; do
+        if [ ! -f "$ROOTFS_DIR/$file_path" ]; then
+            echo "Missing required file in target rootfs: /$file_path" >&2
+            exit 1
+        fi
+    done
+}
+
 write_placeholder_initramfs() {
     local initramfs_path="$1"
 
@@ -105,7 +148,7 @@ prepare_local_repo() {
     chown -R "$makepkg_user:$makepkg_user" "$LOCAL_REPO_DIR"
     rm -f "$LOCAL_REPO_DIR"/*.pkg.tar.* "$LOCAL_REPO_DIR"/pipa-local.db* "$LOCAL_REPO_DIR"/pipa-local.files*
 
-    for pkg in "${LOCAL_REPO_PACKAGES[@]}"; do
+    for pkg in "${LOCAL_REPO_BUILD_DIRS[@]}"; do
         pkg_dir="$LOCAL_PKG_DIR/$pkg"
         echo "### Building local runtime package: $pkg"
         chown -R "$makepkg_user:$makepkg_user" "$pkg_dir"
@@ -137,7 +180,9 @@ prepare_local_repo() {
             esac
         done
 
-        if [ "$pkg" != "linux-pipa" ] && [ ${#install_packages[@]} -gt 0 ]; then
+        # Only install the local packages that later local builds link against.
+        # This avoids replacing host packages like bluez during image prep.
+        if array_contains "$pkg" "${LOCAL_HOST_BUILD_SUPPORT_DIRS[@]}" && [ ${#install_packages[@]} -gt 0 ]; then
             pacman -U --noconfirm --ask=4 "${install_packages[@]}"
         fi
     done
@@ -249,6 +294,7 @@ EOF
 BASE_PACKAGES=(
     base base-devel sudo nano vim git wget rsync openssh lsb-release
     networkmanager iwd mesa
+    linux-firmware
     archlinuxarm-keyring
     alsa-ucm-conf alsa-utils
     pipewire pipewire-alsa pipewire-pulse pipewire-jack wireplumber
@@ -261,18 +307,13 @@ BASE_PACKAGES=(
     eos-hooks eos-update-notifier welcome
 )
 
-# Install the published Pipa device package set explicitly from the external
-# pipa-alarm repo, while keeping the kernel local so we can pin a specific
-# source tree independently of the published repo version.
+# Install the published Pipa device packages that are not already built from
+# the in-tree PKGBUILDs. The local repo stays first in pacman.conf so the
+# image consistently prefers the known-good local Pipa package set.
 PIPA_REPO_PACKAGES=(
-    bluez-git
-    bootmac
     box64
     device-xiaomi-pipa
     gamescope
-    hexagonrpcd
-    iio-sensor-proxy-libssc
-    libssc
     linux-firmware-pipa-adreno
     linux-firmware-pipa-adsp
     linux-firmware-pipa-awinic
@@ -284,15 +325,9 @@ PIPA_REPO_PACKAGES=(
     linux-firmware-pipa-venus
     mangohud-git
     mkbootimg-pipa
-    qbootctl
     swclock-offset
     widevine
     wine-aarch64
-)
-
-LOCAL_IMAGE_PACKAGES=(
-    "${LOCAL_RUNTIME_PACKAGES[@]}"
-    linux-pipa
 )
 
 case "$DE_NAME" in
@@ -303,6 +338,7 @@ case "$DE_NAME" in
             kdeconnect discover konsole dolphin ark filelight
             gwenview okular spectacle elisa kate kcalc kalk
             plasma-browser-integration plasma-systemmonitor
+            kdialog
             qt6-multimedia-ffmpeg
         )
         DISPLAY_MANAGER="plasmalogin"
@@ -383,6 +419,276 @@ RemainAfterExit=yes
 WantedBy=multi-user.target
 EOF
 
+install -Dm755 /dev/stdin "$ROOTFS_DIR/usr/local/bin/pipa-set-power-profile" <<'EOF'
+#!/bin/sh
+set -eu
+
+profile="${1:-}"
+
+case "$profile" in
+    battery)
+        governor_preferences="powersave schedutil ondemand conservative performance"
+        max_percent=60
+        ;;
+    balanced)
+        governor_preferences="schedutil ondemand conservative powersave performance"
+        max_percent=85
+        ;;
+    performance)
+        governor_preferences="performance schedutil ondemand conservative powersave"
+        max_percent=100
+        ;;
+    *)
+        echo "Usage: $0 {battery|balanced|performance}" >&2
+        exit 1
+        ;;
+esac
+
+pick_governor() {
+    available_governors="$1"
+
+    for candidate in $governor_preferences; do
+        case " $available_governors " in
+            *" $candidate "*) printf '%s\n' "$candidate"; return 0 ;;
+        esac
+    done
+
+    return 1
+}
+
+applied=0
+for policy in /sys/devices/system/cpu/cpufreq/policy*; do
+    [ -d "$policy" ] || continue
+    applied=1
+
+    available_governors="$(cat "$policy/scaling_available_governors" 2>/dev/null || true)"
+    governor="$(pick_governor "$available_governors" || cat "$policy/scaling_governor")"
+    cpuinfo_max="$(cat "$policy/cpuinfo_max_freq")"
+    cpuinfo_min="$(cat "$policy/cpuinfo_min_freq" 2>/dev/null || cat "$policy/scaling_min_freq")"
+    target_max=$((cpuinfo_max * max_percent / 100))
+
+    if [ "$target_max" -lt "$cpuinfo_min" ]; then
+        target_max="$cpuinfo_min"
+    fi
+
+    if [ -w "$policy/scaling_governor" ]; then
+        printf '%s\n' "$governor" > "$policy/scaling_governor"
+    fi
+
+    if [ -w "$policy/scaling_min_freq" ]; then
+        printf '%s\n' "$cpuinfo_min" > "$policy/scaling_min_freq"
+    fi
+
+    if [ -w "$policy/scaling_max_freq" ]; then
+        printf '%s\n' "$target_max" > "$policy/scaling_max_freq"
+    fi
+done
+
+if [ "$applied" -eq 0 ]; then
+    echo "No cpufreq policies were found" >&2
+    exit 1
+fi
+EOF
+
+install -Dm755 /dev/stdin "$ROOTFS_DIR/usr/local/bin/pipa-power-battery" <<'EOF'
+#!/bin/sh
+set -eu
+if [ "$(id -u)" -eq 0 ]; then
+    exec /usr/local/bin/pipa-set-power-profile battery
+fi
+exec sudo /usr/local/bin/pipa-set-power-profile battery
+EOF
+
+install -Dm755 /dev/stdin "$ROOTFS_DIR/usr/local/bin/pipa-power-balanced" <<'EOF'
+#!/bin/sh
+set -eu
+if [ "$(id -u)" -eq 0 ]; then
+    exec /usr/local/bin/pipa-set-power-profile balanced
+fi
+exec sudo /usr/local/bin/pipa-set-power-profile balanced
+EOF
+
+install -Dm755 /dev/stdin "$ROOTFS_DIR/usr/local/bin/pipa-power-performance" <<'EOF'
+#!/bin/sh
+set -eu
+if [ "$(id -u)" -eq 0 ]; then
+    exec /usr/local/bin/pipa-set-power-profile performance
+fi
+exec sudo /usr/local/bin/pipa-set-power-profile performance
+EOF
+
+install -Dm644 /dev/stdin "$ROOTFS_DIR/usr/lib/systemd/system/pipa-power-profile@.service" <<'EOF'
+[Unit]
+Description=Apply Xiaomi Pad 6 power profile %I
+ConditionPathExists=/sys/devices/system/cpu/cpufreq
+After=systemd-udev-settle.service
+Wants=systemd-udev-settle.service
+Before=display-manager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/pipa-set-power-profile %I
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+install -Dm755 /dev/stdin "$ROOTFS_DIR/usr/local/bin/pipa-firstboot-setup" <<'EOF'
+#!/bin/sh
+set -eu
+
+TITLE="EndeavourOS Pipa Setup"
+STATE_DIR=/var/lib/pipa-firstboot
+SENTINEL="$STATE_DIR/needs-setup"
+LOCK_FILE="$STATE_DIR/lock"
+AUTOLOGIN_CONF=/etc/plasmalogin.conf.d/10-firstboot-autologin.conf
+AUTOSTART_FILE=/root/.config/autostart/pipa-firstboot-setup.desktop
+DEFAULT_HOSTNAME="pipa"
+DEFAULT_SHELL="/usr/bin/fish"
+
+[ -f "$SENTINEL" ] || exit 0
+
+mkdir -p "$STATE_DIR"
+exec 9>"$LOCK_FILE"
+flock -n 9 || exit 0
+
+trim_whitespace() {
+    printf '%s' "$1" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
+}
+
+prompt_required_text() {
+    prompt="$1"
+    default_value="${2:-}"
+
+    while :; do
+        answer="$(kdialog --title "$TITLE" --inputbox "$prompt" "$default_value" 2>/dev/null)" || return 1
+        answer="$(trim_whitespace "$answer")"
+        if [ -n "$answer" ]; then
+            printf '%s\n' "$answer"
+            return 0
+        fi
+        kdialog --title "$TITLE" --error "This field cannot be empty." >/dev/null 2>&1 || true
+    done
+}
+
+prompt_optional_text() {
+    prompt="$1"
+    default_value="${2:-}"
+
+    answer="$(kdialog --title "$TITLE" --inputbox "$prompt" "$default_value" 2>/dev/null)" || return 1
+    trim_whitespace "$answer"
+}
+
+prompt_password() {
+    prompt="$1"
+
+    while :; do
+        password="$(kdialog --title "$TITLE" --password "$prompt" 2>/dev/null)" || return 1
+        if [ -z "$password" ]; then
+            kdialog --title "$TITLE" --error "Password cannot be empty." >/dev/null 2>&1 || true
+            continue
+        fi
+
+        confirmation="$(kdialog --title "$TITLE" --password "Confirm the password." 2>/dev/null)" || return 1
+        if [ "$password" != "$confirmation" ]; then
+            kdialog --title "$TITLE" --error "Passwords do not match. Please try again." >/dev/null 2>&1 || true
+            continue
+        fi
+
+        printf '%s\n' "$password"
+        return 0
+    done
+}
+
+valid_username() {
+    printf '%s' "$1" | grep -Eq '^[a-z_][a-z0-9_-]*[$]?$'
+}
+
+valid_hostname() {
+    printf '%s' "$1" | grep -Eq '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'
+}
+
+kdialog --title "$TITLE" --msgbox "Welcome to EndeavourOS ARM for Xiaomi Pad 6.\n\nThis first-boot setup will create your user account, set the hostname, and then reboot into the normal login screen." >/dev/null 2>&1 || exit 0
+
+while :; do
+    fullname="$(prompt_optional_text 'Full name (optional):' '')" || exit 0
+    username="$(prompt_required_text 'Username:' '')" || exit 0
+    username="$(printf '%s' "$username" | tr '[:upper:]' '[:lower:]')"
+
+    if ! valid_username "$username"; then
+        kdialog --title "$TITLE" --error "Username must start with a letter or underscore and may contain lowercase letters, numbers, hyphens, or underscores." >/dev/null 2>&1 || true
+        continue
+    fi
+
+    if id "$username" >/dev/null 2>&1; then
+        kdialog --title "$TITLE" --error "User '$username' already exists. Choose another username." >/dev/null 2>&1 || true
+        continue
+    fi
+
+    hostname="$(prompt_required_text 'Hostname:' "$DEFAULT_HOSTNAME")" || exit 0
+    hostname="$(printf '%s' "$hostname" | tr '[:upper:]' '[:lower:]')"
+
+    if ! valid_hostname "$hostname"; then
+        kdialog --title "$TITLE" --error "Hostname may only contain lowercase letters, numbers, and hyphens, and it must begin and end with a letter or number." >/dev/null 2>&1 || true
+        continue
+    fi
+
+    password="$(prompt_password "Password for $username:")" || exit 0
+    break
+done
+
+if [ -n "$fullname" ]; then
+    useradd -m -G wheel -s "$DEFAULT_SHELL" -c "$fullname" "$username"
+else
+    useradd -m -G wheel -s "$DEFAULT_SHELL" "$username"
+fi
+
+printf 'root:%s\n%s:%s\n' "$password" "$username" "$password" | chpasswd
+
+printf '%s\n' "$hostname" > /etc/hostname
+cat > /etc/hosts <<HOSTS
+127.0.0.1 localhost
+::1 localhost
+127.0.1.1 $hostname.localdomain $hostname
+HOSTS
+
+rm -f "$AUTOLOGIN_CONF" "$AUTOSTART_FILE" "$SENTINEL"
+
+kdialog --title "$TITLE" --msgbox "Setup complete.\n\nUser '$username' was created, the hostname was set to '$hostname', and the system will now reboot." >/dev/null 2>&1 || true
+systemctl reboot
+EOF
+
+install -Dm644 /dev/stdin "$ROOTFS_DIR/etc/plasmalogin.conf.d/10-firstboot-autologin.conf" <<'EOF'
+[Autologin]
+User=root
+Session=plasma.desktop
+Relogin=false
+EOF
+
+install -Dm644 /dev/stdin "$ROOTFS_DIR/root/.config/autostart/pipa-firstboot-setup.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=EndeavourOS Pipa First Boot Setup
+Exec=sh -lc 'sleep 3; exec /usr/local/bin/pipa-firstboot-setup'
+OnlyShowIn=KDE;
+X-KDE-Autostart-after=panel
+X-KDE-AutostartScript=true
+NoDisplay=true
+EOF
+
+install -d "$ROOTFS_DIR/var/lib/pipa-firstboot"
+: > "$ROOTFS_DIR/var/lib/pipa-firstboot/needs-setup"
+
+echo "### Validating critical firmware payloads..."
+assert_required_rootfs_files \
+    "usr/lib/firmware/qcom/a650_sqe.fw" \
+    "usr/lib/firmware/qcom/a650_gmu.bin" \
+    "usr/lib/firmware/qca/htbtfw20.tlv" \
+    "usr/lib/firmware/ath11k/QCA6390/hw2.0/amss.bin" \
+    "usr/lib/firmware/ath11k/QCA6390/hw2.0/board-2.bin" \
+    "usr/lib/firmware/ath11k/QCA6390/hw2.0/m3.bin"
+
 KERNEL_VER=$(find "$ROOTFS_DIR/usr/lib/modules" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | head -n 1)
 KERNEL_IMAGE="$(first_existing_file \
     "$ROOTFS_DIR/boot/Image.gz" \
@@ -436,8 +742,18 @@ else
     exit 1
 fi
 
+INITRAMFS_IMAGE="$(first_existing_file \
+    "$ROOTFS_DIR/boot/initramfs-$KERNEL_VER.img" \
+    "$ROOTFS_DIR/boot/initramfs.img" \
+)"
+
 if [ ! -f "$INITRAMFS_IMAGE" ]; then
     echo "Initramfs image was not generated for $KERNEL_VER" >&2
+    exit 1
+fi
+
+if [ "$(stat -c '%s' "$INITRAMFS_IMAGE")" -lt 1048576 ]; then
+    echo "Initramfs image for $KERNEL_VER is unexpectedly small: $INITRAMFS_IMAGE" >&2
     exit 1
 fi
 
@@ -445,10 +761,24 @@ if [ "$INITRAMFS_IMAGE" != "$ROOTFS_DIR/boot/initramfs.img" ]; then
     cp "$INITRAMFS_IMAGE" "$ROOTFS_DIR/boot/initramfs.img"
 fi
 
+if [ "$(stat -c '%s' "$ROOTFS_DIR/boot/initramfs.img")" -lt 1048576 ]; then
+    echo "Canonical /boot/initramfs.img is unexpectedly small after copy" >&2
+    exit 1
+fi
+
 echo "### Preparing kernel+dtb images..."
 cat "$KERNEL_IMAGE" "$DTB_IMAGE" > "$KERNEL_IMAGE_DTB"
 if [ -n "${KERNEL_IMAGE_UNCOMPRESSED:-}" ] && [ -f "$KERNEL_IMAGE_UNCOMPRESSED" ]; then
     cat "$KERNEL_IMAGE_UNCOMPRESSED" "$DTB_IMAGE" > "$KERNEL_IMAGE_UNCOMPRESSED_DTB"
+fi
+
+GRUB_PRIMARY_KERNEL="$(basename "$KERNEL_IMAGE_DTB")"
+GRUB_SEPARATE_DTB_KERNEL="$(basename "$KERNEL_IMAGE")"
+if [ -n "${KERNEL_IMAGE_UNCOMPRESSED:-}" ] && [ -f "$KERNEL_IMAGE_UNCOMPRESSED" ]; then
+    GRUB_SEPARATE_DTB_KERNEL="$(basename "$KERNEL_IMAGE_UNCOMPRESSED")"
+fi
+if [ -n "${KERNEL_IMAGE_UNCOMPRESSED_DTB:-}" ] && [ -f "$KERNEL_IMAGE_UNCOMPRESSED_DTB" ]; then
+    GRUB_PRIMARY_KERNEL="$(basename "$KERNEL_IMAGE_UNCOMPRESSED_DTB")"
 fi
 
 echo "### Setting up /etc/cmdline..."
@@ -464,6 +794,7 @@ echo "### Configuring system services..."
 arch-chroot "$ROOTFS_DIR" systemctl enable "$DISPLAY_MANAGER"
 arch-chroot "$ROOTFS_DIR" systemctl enable NetworkManager sshd bluetooth systemd-resolved systemd-timesyncd
 arch-chroot "$ROOTFS_DIR" systemctl enable power-profiles-daemon
+arch-chroot "$ROOTFS_DIR" systemctl enable pipa-power-profile@balanced.service
 arch-chroot "$ROOTFS_DIR" systemctl enable bootmac-bluetooth || true
 arch-chroot "$ROOTFS_DIR" systemctl enable pd-mapper rmtfs tqftpserv || true
 arch-chroot "$ROOTFS_DIR" systemctl enable hexagonrpcd-sdsp hexagonrpcd-adsp-rootpd iio-sensor-proxy pipa-audio-init || true
@@ -602,7 +933,7 @@ search --no-floppy --label --set=boot $BOOT_LABEL
 set root=(\$boot)
 
 if loadfont unicode; then
-    set gfxmode=auto
+    set gfxmode=$GRUB_GFXMODE
     set gfxpayload=keep
     terminal_output gfxterm
 fi
@@ -624,14 +955,25 @@ fi
 cat >> "$BOOT_MNT/grub2/grub.cfg" <<EOF
 
 menuentry "EndeavourOS ARM (Pipa)" {
+    linux (\$boot)/boot/$GRUB_PRIMARY_KERNEL root=LABEL=$ROOTFS_LABEL rw rootwait boot=LABEL=$BOOT_LABEL console=tty0 console=ttyS0 earlycon quiet splash
+    initrd (\$boot)/boot/$(basename "$INITRAMFS_IMAGE")
+}
+
+menuentry "EndeavourOS ARM (Pipa) - Separate DTB Fallback" {
     devicetree (\$boot)/boot/devicetree/sm8250-xiaomi-pipa.dtb
-    linux (\$boot)/boot/$(basename "$KERNEL_IMAGE_UNCOMPRESSED") root=LABEL=$ROOTFS_LABEL rw rootwait boot=LABEL=$BOOT_LABEL console=tty0 console=ttyS0 earlycon quiet splash
+    linux (\$boot)/boot/$GRUB_SEPARATE_DTB_KERNEL root=LABEL=$ROOTFS_LABEL rw rootwait boot=LABEL=$BOOT_LABEL console=tty0 console=ttyS0 earlycon quiet splash
     initrd (\$boot)/boot/$(basename "$INITRAMFS_IMAGE")
 }
 
 menuentry "EndeavourOS ARM (Pipa) - Gzipped Kernel Fallback" {
     devicetree (\$boot)/boot/devicetree/sm8250-xiaomi-pipa.dtb
     linux (\$boot)/boot/$(basename "$KERNEL_IMAGE") root=LABEL=$ROOTFS_LABEL rw rootwait boot=LABEL=$BOOT_LABEL console=tty0 console=ttyS0 earlycon quiet splash
+    initrd (\$boot)/boot/$(basename "$INITRAMFS_IMAGE")
+}
+
+menuentry "EndeavourOS ARM (Pipa) - Debug Verbose" {
+    devicetree (\$boot)/boot/devicetree/sm8250-xiaomi-pipa.dtb
+    linux (\$boot)/boot/$GRUB_SEPARATE_DTB_KERNEL $TARGET_KERNEL_DEBUG_CMDLINE
     initrd (\$boot)/boot/$(basename "$INITRAMFS_IMAGE")
 }
 EOF
