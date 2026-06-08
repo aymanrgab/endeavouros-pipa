@@ -21,49 +21,16 @@ TARGET_KERNEL_CMDLINE="root=LABEL=$ROOTFS_LABEL rw rootwait boot=LABEL=$BOOT_LAB
 TARGET_KERNEL_DEBUG_CMDLINE="root=LABEL=$ROOTFS_LABEL rw rootwait boot=LABEL=$BOOT_LABEL console=tty0 console=ttyS0 earlycon ignore_loglevel loglevel=8 no_console_suspend rd.debug systemd.log_level=debug systemd.log_target=console plymouth.enable=0"
 PACMAN_CONF="$(pwd)/pacman-pipa.conf"
 EFI_TEMPLATE_DIR="$(pwd)/efi-template"
-LOCAL_PKG_DIR="$(pwd)/pkgbuilds"
-LOCAL_REPO_DIR="$(pwd)/local-repo"
 VBMETA_DISABLED_IMG="$(pwd)/vbmeta-disabled.img"
 PIPA_REPO_URL="${PIPA_REPO_URL:-https://thespider2.github.io/pipa-pkgs/repo/}"
 SILICIUM_URL="https://github.com/onesaladleaf/Mu-Silicium/releases/download/v3.5-pocketblue/Mu-pipa.img"
 SILICIUM_SHA256="ea3e1e123beea7ee5394295bdfee75054711d4734e9403831fda7f037fc900b6"
 GRUB_THEME_ARCHIVE_URL="${GRUB_THEME_ARCHIVE_URL:-https://codeload.github.com/EndeavourOS-archive/grub2-theme-endeavouros/tar.gz/refs/heads/main}"
 GRUB_GFXMODE="${GRUB_GFXMODE:-1280x800,1024x768,auto}"
+PIPA_REPO_NAME="${PIPA_REPO_NAME:-pipa-pkgs}"
 ESP_SIZE_MB=128
 BOOT_SIZE_MB=1024
-HOST_BUILD_PACKAGES=(
-    base-devel git sudo gcc make
-    arch-install-scripts e2fsprogs dosfstools zip unzip
-    bc bison flex cpio kmod python tar xz meson ninja cmake rsync wget
-    glib2 libgudev polkit libqmi protobuf-c qrtr dracut android-tools
-    pahole gtk-doc umockdev alsa-lib dbus ell json-c libical readline
-    python-docutils python-pygments autoconf automake libtool
-)
-LOCAL_REPO_BUILD_DIRS=(
-    qrtr
-    rmtfs
-    tqftpserv
-    pd-mapper
-    qbootctl
-    xiaomi-pipa-firmware
-    pipa-dracut
-    bluez-git
-    bootmac
-    hexagonrpc
-    libssc
-    iio-sensor-proxy
-    pipa-sensors
-    pipa-sound-conf
-    alsa-ucm-conf-sm8250
-    linux-pipa
-    pipa-metapkg
-)
-LOCAL_HOST_BUILD_SUPPORT_DIRS=(
-    qrtr
-    hexagonrpc
-    libssc
-)
-LOCAL_IMAGE_PACKAGES=(
+PIPA_IMAGE_PACKAGES=(
     pipa-metapkg
 )
 
@@ -107,20 +74,6 @@ first_existing_dir() {
     return 1
 }
 
-array_contains() {
-    local needle="$1"
-    shift
-
-    local item
-    for item in "$@"; do
-        if [ "$item" = "$needle" ]; then
-            return 0
-        fi
-    done
-
-    return 1
-}
-
 assert_required_rootfs_files() {
     local file_path
     for file_path in "$@"; do
@@ -142,61 +95,6 @@ import sys
 path = pathlib.Path(sys.argv[1])
 path.write_bytes(gzip.compress(b"pipa placeholder initramfs\n"))
 PY
-}
-
-prepare_local_repo() {
-    local makepkg_user="${SUDO_USER:-builder}"
-    local pkg pkg_dir built_packages package_path install_packages
-
-    if ! id -u "$makepkg_user" >/dev/null 2>&1; then
-        useradd -m "$makepkg_user"
-    fi
-
-    echo "### Installing host build dependencies..."
-    pacman -S --needed --noconfirm "${HOST_BUILD_PACKAGES[@]}"
-
-    install -d -m 0755 "$LOCAL_REPO_DIR"
-    chown -R "$makepkg_user:$makepkg_user" "$LOCAL_REPO_DIR"
-    rm -f "$LOCAL_REPO_DIR"/*.pkg.tar.* "$LOCAL_REPO_DIR"/pipa-local.db* "$LOCAL_REPO_DIR"/pipa-local.files*
-
-    for pkg in "${LOCAL_REPO_BUILD_DIRS[@]}"; do
-        pkg_dir="$LOCAL_PKG_DIR/$pkg"
-        echo "### Building local runtime package: $pkg"
-        chown -R "$makepkg_user:$makepkg_user" "$pkg_dir"
-        su "$makepkg_user" -c "cd '$pkg_dir' && rm -f ./*.pkg.tar.* && makepkg --nodeps --noconfirm --nocheck"
-
-        built_packages=()
-        shopt -s nullglob
-        for package_path in "$pkg_dir"/*.pkg.tar.zst "$pkg_dir"/*.pkg.tar.xz; do
-            case "$(basename "$package_path")" in
-                *-debug-*.pkg.tar.*|*-headers-*.pkg.tar.*) ;;
-                *) built_packages+=("$package_path") ;;
-            esac
-        done
-        shopt -u nullglob
-
-        if [ ${#built_packages[@]} -eq 0 ]; then
-            echo "No package archives were produced for $pkg in $pkg_dir" >&2
-            exit 1
-        fi
-
-        cp "${built_packages[@]}" "$LOCAL_REPO_DIR/"
-        repo-add "$LOCAL_REPO_DIR/pipa-local.db.tar.gz" "${built_packages[@]}"
-
-        install_packages=()
-        for package_path in "${built_packages[@]}"; do
-            case "$(basename "$package_path")" in
-                *-debug-*.pkg.tar.*|*-headers-*.pkg.tar.*) ;;
-                *) install_packages+=("$package_path") ;;
-            esac
-        done
-
-        # Only install the local packages that later local builds link against.
-        # This avoids replacing host packages like bluez during image prep.
-        if array_contains "$pkg" "${LOCAL_HOST_BUILD_SUPPORT_DIRS[@]}" && [ ${#install_packages[@]} -gt 0 ]; then
-            pacman -U --noconfirm --ask=4 "${install_packages[@]}"
-        fi
-    done
 }
 
 write_uefi_csv() {
@@ -283,17 +181,12 @@ if [ ! -f "$VBMETA_DISABLED_IMG" ]; then
 fi
 
 echo "### Preparing pacman configuration..."
-prepare_local_repo
 cp /etc/pacman.conf "$PACMAN_CONF"
 sed -i '/^DisableSandbox$/d' "$PACMAN_CONF"
 sed -i '/^\[options\]$/a DisableSandbox' "$PACMAN_CONF"
 cat <<EOF >> "$PACMAN_CONF"
 
-[pipa-local]
-SigLevel = Optional TrustAll
-Server = file://$LOCAL_REPO_DIR
-
-[pipa-alarm]
+[$PIPA_REPO_NAME]
 SigLevel = Optional TrustAll
 Server = $PIPA_REPO_URL
 
@@ -318,13 +211,20 @@ BASE_PACKAGES=(
     eos-hooks eos-update-notifier welcome
 )
 
-# Install the published Pipa device packages that are not already built from
-# the in-tree PKGBUILDs. The local repo stays first in pacman.conf so the
-# image consistently prefers the known-good local Pipa package set.
+# Install the published Pipa device packages directly from the hosted repo.
+# Keep the list aligned with the packages currently published in pipa-pkgs.
 PIPA_REPO_PACKAGES=(
+    alsa-ucm-conf-sm8250
+    bluez-git
+    bootmac
     box64
     device-xiaomi-pipa
     gamescope
+    hexagonrpc
+    hexagonrpcd
+    iio-sensor-proxy-libssc
+    iio-sensor-proxy-pipa
+    libssc
     linux-firmware-pipa-adreno
     linux-firmware-pipa-adsp
     linux-firmware-pipa-awinic
@@ -334,11 +234,23 @@ PIPA_REPO_PACKAGES=(
     linux-firmware-pipa-nuvolta
     linux-firmware-pipa-slpi
     linux-firmware-pipa-venus
+    linux-pipa
     mangohud-git
     mkbootimg-pipa
+    pd-mapper
+    pipa-dracut
+    pipa-kernel-flasher-hook
+    pipa-kernel-hooks
     swclock-offset
+    pipa-sensors
+    pipa-sound-conf
+    qbootctl
+    qrtr
+    rmtfs
+    tqftpserv
     widevine
     wine-aarch64
+    xiaomi-pipa-firmware
 )
 
 case "$DE_NAME" in
@@ -371,21 +283,16 @@ printf '%s\n' "$TARGET_KERNEL_CMDLINE" > "$ROOTFS_DIR/boot/cmdline.txt"
 write_placeholder_initramfs "$ROOTFS_DIR/boot/initramfs.img"
 
 echo "### Bootstrapping rootfs with pacstrap..."
-pacstrap -C "$PACMAN_CONF" -KGM "$ROOTFS_DIR" "${BASE_PACKAGES[@]}" "${PIPA_REPO_PACKAGES[@]}" "${LOCAL_IMAGE_PACKAGES[@]}" "${DESKTOP_PACKAGES[@]}"
+pacstrap -C "$PACMAN_CONF" -KGM "$ROOTFS_DIR" "${BASE_PACKAGES[@]}" "${PIPA_REPO_PACKAGES[@]}" "${PIPA_IMAGE_PACKAGES[@]}" "${DESKTOP_PACKAGES[@]}"
 
 echo "### Writing target pacman configuration..."
 cp "$PACMAN_CONF" "$ROOTFS_DIR/etc/pacman.conf"
 
-echo "### Installing local Pipa audio configuration..."
-install -Dm644 \
-    "$LOCAL_PKG_DIR/alsa-ucm-conf-sm8250/Xiaomi Pad 6.conf" \
-    "$ROOTFS_DIR/usr/share/alsa/ucm2/conf.d/sm8250/Xiaomi Pad 6.conf"
-install -Dm644 \
-    "$LOCAL_PKG_DIR/alsa-ucm-conf-sm8250/HiFi_pipa.conf" \
-    "$ROOTFS_DIR/usr/share/alsa/ucm2/Qualcomm/sm8250/HiFi_pipa.conf"
-install -Dm644 \
-    "$LOCAL_PKG_DIR/pipa-sound-conf/51-pipa.conf" \
-    "$ROOTFS_DIR/usr/share/wireplumber/wireplumber.conf.d/51-pipa.conf"
+echo "### Validating repo-provided Pipa audio configuration..."
+assert_required_rootfs_files \
+    "usr/share/alsa/ucm2/conf.d/sm8250/Xiaomi Pad 6.conf" \
+    "usr/share/alsa/ucm2/Qualcomm/sm8250/HiFi_pipa.conf" \
+    "usr/share/wireplumber/wireplumber.conf.d/51-pipa.conf"
 ln -sf "Xiaomi Pad 6.conf" \
     "$ROOTFS_DIR/usr/share/alsa/ucm2/conf.d/sm8250/sm8250.conf"
 ln -sf "Xiaomi Pad 6.conf" \
