@@ -12,3 +12,9 @@ mkosi.rootfs/
 *.pkg.tar.xz
 pkgbuilds/*/src/
 pkgbuilds/*/pkg/
+*.raw
+*.log
+debug-*.md
+log.log
+pmaports-*/
+pmos-pipa-config*.patch

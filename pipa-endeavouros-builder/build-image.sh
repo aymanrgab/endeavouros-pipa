@@ -28,11 +28,32 @@ SILICIUM_SHA256="ea3e1e123beea7ee5394295bdfee75054711d4734e9403831fda7f037fc900b
 GRUB_THEME_ARCHIVE_URL="${GRUB_THEME_ARCHIVE_URL:-https://codeload.github.com/EndeavourOS-archive/grub2-theme-endeavouros/tar.gz/refs/heads/main}"
 GRUB_GFXMODE="${GRUB_GFXMODE:-1280x800,1024x768,auto}"
 PIPA_REPO_NAME="${PIPA_REPO_NAME:-pipa-pkgs}"
+PIPA_INCLUDE_SENSORS="${PIPA_INCLUDE_SENSORS:-1}"
 ESP_SIZE_MB=128
 BOOT_SIZE_MB=1024
-PIPA_IMAGE_PACKAGES=(
-    pipa-metapkg
+PIPA_CORE_PACKAGES=(
+    alsa-ucm-conf-sm8250
+    bluez-git
+    bootmac
+    linux-pipa
+    pd-mapper
+    pipa-dracut
+    pipa-kernel-flasher-hook
+    pipa-sound-conf
+    qbootctl
+    qrtr
+    rmtfs
+    tqftpserv
+    xiaomi-pipa-firmware
 )
+if [ "$PIPA_INCLUDE_SENSORS" = "1" ]; then
+    PIPA_CORE_PACKAGES+=(
+        hexagonrpc
+        iio-sensor-proxy-pipa
+        libssc
+        pipa-sensors
+    )
+fi
 
 cleanup() {
     if mountpoint -q "$IMAGE_MNT"; then
@@ -72,6 +93,13 @@ first_existing_dir() {
         fi
     done
     return 1
+}
+
+qualify_repo_targets() {
+    local pkg
+    for pkg in "$@"; do
+        printf '%s/%s\n' "$PIPA_REPO_NAME" "$pkg"
+    done
 }
 
 assert_required_rootfs_files() {
@@ -205,10 +233,10 @@ BASE_PACKAGES=(
     power-profiles-daemon upower modemmanager xdg-user-dirs
     iptables noto-fonts qt6-virtualkeyboard
     dracut
-    fish fastfetch
+    fish fastfetch zenity
     grub
-    endeavouros-keyring endeavouros-mirrorlist endeavouros-theming
-    eos-hooks eos-update-notifier welcome
+    endeavouros-branding endeavouros-keyring endeavouros-mirrorlist endeavouros-theming
+    eos-bash-shared eos-hooks eos-rankmirrors eos-translations eos-update eos-update-notifier welcome
 )
 
 # Install the published Pipa packages directly from the hosted repo.
@@ -224,6 +252,8 @@ PIPA_REPO_PACKAGES=(
     widevine
     wine-aarch64
 )
+mapfile -t QUALIFIED_PIPA_CORE_PACKAGES < <(qualify_repo_targets "${PIPA_CORE_PACKAGES[@]}")
+mapfile -t QUALIFIED_PIPA_REPO_PACKAGES < <(qualify_repo_targets "${PIPA_REPO_PACKAGES[@]}")
 
 case "$DE_NAME" in
     plasma)
@@ -233,14 +263,20 @@ case "$DE_NAME" in
             kdeconnect discover konsole dolphin ark filelight
             gwenview okular spectacle elisa kate kcalc kalk
             plasma-browser-integration plasma-systemmonitor
-            kdialog
+            endeavouros-konsole-colors eos-settings-plasma kdialog
             qt6-multimedia-ffmpeg
         )
         DISPLAY_MANAGER="plasmalogin"
         ;;
     gnome)
-        echo "GNOME builds are temporarily disabled. Use plasma for now."
-        exit 1
+        DESKTOP_PACKAGES=(
+            gnome-shell gnome-session gnome-control-center gnome-console
+            nautilus eog evince file-roller gnome-text-editor gnome-tweaks
+            gdm xdg-desktop-portal-gnome
+            firefox flatpak
+            eos-settings-gnome
+        )
+        DISPLAY_MANAGER="gdm"
         ;;
     *)
         echo "Unsupported desktop environment: $DE_NAME"
@@ -255,7 +291,7 @@ printf '%s\n' "$TARGET_KERNEL_CMDLINE" > "$ROOTFS_DIR/boot/cmdline.txt"
 write_placeholder_initramfs "$ROOTFS_DIR/boot/initramfs.img"
 
 echo "### Bootstrapping rootfs with pacstrap..."
-pacstrap -C "$PACMAN_CONF" -KGM "$ROOTFS_DIR" "${BASE_PACKAGES[@]}" "${PIPA_REPO_PACKAGES[@]}" "${PIPA_IMAGE_PACKAGES[@]}" "${DESKTOP_PACKAGES[@]}"
+pacstrap -C "$PACMAN_CONF" -KGM "$ROOTFS_DIR" "${BASE_PACKAGES[@]}" "${QUALIFIED_PIPA_CORE_PACKAGES[@]}" "${QUALIFIED_PIPA_REPO_PACKAGES[@]}" "${DESKTOP_PACKAGES[@]}"
 
 echo "### Writing target pacman configuration..."
 cp "$PACMAN_CONF" "$ROOTFS_DIR/etc/pacman.conf"
@@ -265,11 +301,21 @@ assert_required_rootfs_files \
     "usr/share/alsa/ucm2/conf.d/sm8250/Xiaomi Pad 6.conf" \
     "usr/share/alsa/ucm2/Qualcomm/sm8250/HiFi_pipa.conf" \
     "usr/share/wireplumber/wireplumber.conf.d/51-pipa.conf"
+if [ "$PIPA_INCLUDE_SENSORS" = "1" ]; then
+    echo "### Validating repo-provided Pipa sensor configuration..."
+    assert_required_rootfs_files \
+        "usr/lib/libssc.so.0" \
+        "usr/lib/udev/rules.d/81-libssc-xiaomi-pipa.rules" \
+        "usr/share/hexagonrpcd/hexagonrpcd-sdsp.conf" \
+        "usr/share/hexagonrpcd/hexagonrpcd-adsp-rootpd.conf" \
+        "usr/share/hexagonrpcd/hexagonrpcd-adsp-sensorspd.conf"
+fi
 ln -sf "Xiaomi Pad 6.conf" \
     "$ROOTFS_DIR/usr/share/alsa/ucm2/conf.d/sm8250/sm8250.conf"
 ln -sf "Xiaomi Pad 6.conf" \
     "$ROOTFS_DIR/usr/share/alsa/ucm2/conf.d/sm8250/Xiaomi-Pad6-pipa-M82.conf"
-install -Dm644 /dev/stdin "$ROOTFS_DIR/etc/systemd/system/iio-sensor-proxy.service.d/10-pipa-audio.conf" <<'EOF'
+if [ "$PIPA_INCLUDE_SENSORS" = "1" ]; then
+    install -Dm644 /dev/stdin "$ROOTFS_DIR/etc/systemd/system/iio-sensor-proxy.service.d/10-pipa-audio.conf" <<'EOF'
 [Unit]
 Wants=
 After=
@@ -278,6 +324,7 @@ Wants=hexagonrpcd-sdsp.service
 After=hexagonrpcd-adsp-rootpd.service
 After=hexagonrpcd-sdsp.service
 EOF
+fi
 
 install -Dm755 /dev/stdin "$ROOTFS_DIR/usr/local/bin/pipa-audio-init" <<'EOF'
 #!/bin/sh
@@ -296,8 +343,19 @@ EOF
 install -Dm644 /dev/stdin "$ROOTFS_DIR/usr/lib/systemd/system/pipa-audio-init.service" <<'EOF'
 [Unit]
 Description=Initialize Xiaomi Pad 6 ALSA state
+EOF
+if [ "$PIPA_INCLUDE_SENSORS" = "1" ]; then
+cat >> "$ROOTFS_DIR/usr/lib/systemd/system/pipa-audio-init.service" <<'EOF'
 After=systemd-udev-settle.service pd-mapper.service rmtfs.service tqftpserv.service hexagonrpcd-adsp-rootpd.service hexagonrpcd-sdsp.service
 Wants=systemd-udev-settle.service pd-mapper.service rmtfs.service tqftpserv.service hexagonrpcd-adsp-rootpd.service hexagonrpcd-sdsp.service
+EOF
+else
+cat >> "$ROOTFS_DIR/usr/lib/systemd/system/pipa-audio-init.service" <<'EOF'
+After=systemd-udev-settle.service pd-mapper.service rmtfs.service tqftpserv.service
+Wants=systemd-udev-settle.service pd-mapper.service rmtfs.service tqftpserv.service
+EOF
+fi
+cat >> "$ROOTFS_DIR/usr/lib/systemd/system/pipa-audio-init.service" <<'EOF'
 Before=display-manager.service
 
 [Service]
@@ -308,6 +366,59 @@ RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
 EOF
+if [ "$PIPA_INCLUDE_SENSORS" = "1" ]; then
+install -Dm755 /dev/stdin "$ROOTFS_DIR/usr/local/bin/pipa-prepare-sensor-persist" <<'EOF'
+#!/bin/sh
+set -eu
+
+for dir in \
+    /mnt/vendor/persist \
+    /mnt/vendor/persist/sensors \
+    /mnt/vendor/persist/sensors/registry \
+    /mnt/vendor/persist/sensors/registry/registry
+do
+    install -d -m 0775 -o fastrpc -g fastrpc "$dir"
+done
+EOF
+
+install -Dm644 /dev/stdin "$ROOTFS_DIR/usr/lib/systemd/system/pipa-sensors-persist.service" <<'EOF'
+[Unit]
+Description=Prepare Xiaomi Pad 6 sensor persist directories
+DefaultDependencies=no
+After=local-fs.target systemd-sysusers.service
+Before=hexagonrpcd-adsp-rootpd.service hexagonrpcd-sdsp.service hexagonrpcd-adsp-sensorspd.service iio-sensor-proxy.service
+Wants=systemd-sysusers.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/pipa-prepare-sensor-persist
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+install -Dm755 /dev/stdin "$ROOTFS_DIR/usr/lib/systemd/system-sleep/pipa-sensors-resume" <<'EOF'
+#!/bin/sh
+set -eu
+
+case "${1:-}/${2:-}" in
+    post/*)
+        ;;
+    *)
+        exit 0
+        ;;
+esac
+
+# Give the fastrpc devices a moment to reappear after resume.
+sleep 2
+
+/usr/local/bin/pipa-prepare-sensor-persist || true
+systemctl restart hexagonrpcd-adsp-rootpd.service || true
+systemctl restart hexagonrpcd-sdsp.service || true
+systemctl restart hexagonrpcd-adsp-sensorspd.service || true
+systemctl restart iio-sensor-proxy.service || true
+EOF
+fi
 
 install -Dm755 /dev/stdin "$ROOTFS_DIR/usr/local/bin/pipa-set-power-profile" <<'EOF'
 #!/bin/sh
@@ -432,16 +543,56 @@ TITLE="EndeavourOS Pipa Setup"
 STATE_DIR=/var/lib/pipa-firstboot
 SENTINEL="$STATE_DIR/needs-setup"
 LOCK_FILE="$STATE_DIR/lock"
-AUTOLOGIN_CONF=/etc/plasmalogin.conf.d/10-firstboot-autologin.conf
 AUTOSTART_FILE=/root/.config/autostart/pipa-firstboot-setup.desktop
 DEFAULT_HOSTNAME="pipa"
 DEFAULT_SHELL="/usr/bin/fish"
+PIPA_FIRSTBOOT_DM="$(cat /etc/pipa-firstboot-dm 2>/dev/null || printf '%s' plasmalogin)"
 
 [ -f "$SENTINEL" ] || exit 0
 
 mkdir -p "$STATE_DIR"
 exec 9>"$LOCK_FILE"
 flock -n 9 || exit 0
+
+dialog_backend() {
+    if command -v zenity >/dev/null 2>&1; then
+        printf '%s\n' zenity
+        return 0
+    fi
+
+    if command -v kdialog >/dev/null 2>&1; then
+        printf '%s\n' kdialog
+        return 0
+    fi
+
+    return 1
+}
+
+prompt_info() {
+    message="$1"
+
+    case "$(dialog_backend)" in
+        zenity)
+            zenity --info --title "$TITLE" --text "$message" >/dev/null 2>&1 || return 1
+            ;;
+        kdialog)
+            kdialog --title "$TITLE" --msgbox "$message" >/dev/null 2>&1 || return 1
+            ;;
+    esac
+}
+
+prompt_error() {
+    message="$1"
+
+    case "$(dialog_backend)" in
+        zenity)
+            zenity --error --title "$TITLE" --text "$message" >/dev/null 2>&1 || true
+            ;;
+        kdialog)
+            kdialog --title "$TITLE" --error "$message" >/dev/null 2>&1 || true
+            ;;
+    esac
+}
 
 trim_whitespace() {
     printf '%s' "$1" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
@@ -452,13 +603,20 @@ prompt_required_text() {
     default_value="${2:-}"
 
     while :; do
-        answer="$(kdialog --title "$TITLE" --inputbox "$prompt" "$default_value" 2>/dev/null)" || return 1
+        case "$(dialog_backend)" in
+            zenity)
+                answer="$(zenity --entry --title "$TITLE" --text "$prompt" --entry-text "$default_value" 2>/dev/null)" || return 1
+                ;;
+            kdialog)
+                answer="$(kdialog --title "$TITLE" --inputbox "$prompt" "$default_value" 2>/dev/null)" || return 1
+                ;;
+        esac
         answer="$(trim_whitespace "$answer")"
         if [ -n "$answer" ]; then
             printf '%s\n' "$answer"
             return 0
         fi
-        kdialog --title "$TITLE" --error "This field cannot be empty." >/dev/null 2>&1 || true
+        prompt_error "This field cannot be empty."
     done
 }
 
@@ -466,7 +624,14 @@ prompt_optional_text() {
     prompt="$1"
     default_value="${2:-}"
 
-    answer="$(kdialog --title "$TITLE" --inputbox "$prompt" "$default_value" 2>/dev/null)" || return 1
+    case "$(dialog_backend)" in
+        zenity)
+            answer="$(zenity --entry --title "$TITLE" --text "$prompt" --entry-text "$default_value" 2>/dev/null)" || return 1
+            ;;
+        kdialog)
+            answer="$(kdialog --title "$TITLE" --inputbox "$prompt" "$default_value" 2>/dev/null)" || return 1
+            ;;
+    esac
     trim_whitespace "$answer"
 }
 
@@ -474,15 +639,29 @@ prompt_password() {
     prompt="$1"
 
     while :; do
-        password="$(kdialog --title "$TITLE" --password "$prompt" 2>/dev/null)" || return 1
+        case "$(dialog_backend)" in
+            zenity)
+                password="$(zenity --entry --title "$TITLE" --text "$prompt" --hide-text 2>/dev/null)" || return 1
+                ;;
+            kdialog)
+                password="$(kdialog --title "$TITLE" --password "$prompt" 2>/dev/null)" || return 1
+                ;;
+        esac
         if [ -z "$password" ]; then
-            kdialog --title "$TITLE" --error "Password cannot be empty." >/dev/null 2>&1 || true
+            prompt_error "Password cannot be empty."
             continue
         fi
 
-        confirmation="$(kdialog --title "$TITLE" --password "Confirm the password." 2>/dev/null)" || return 1
+        case "$(dialog_backend)" in
+            zenity)
+                confirmation="$(zenity --entry --title "$TITLE" --text "Confirm the password." --hide-text 2>/dev/null)" || return 1
+                ;;
+            kdialog)
+                confirmation="$(kdialog --title "$TITLE" --password "Confirm the password." 2>/dev/null)" || return 1
+                ;;
+        esac
         if [ "$password" != "$confirmation" ]; then
-            kdialog --title "$TITLE" --error "Passwords do not match. Please try again." >/dev/null 2>&1 || true
+            prompt_error "Passwords do not match. Please try again."
             continue
         fi
 
@@ -499,7 +678,7 @@ valid_hostname() {
     printf '%s' "$1" | grep -Eq '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'
 }
 
-kdialog --title "$TITLE" --msgbox "Welcome to EndeavourOS ARM for Xiaomi Pad 6.\n\nThis first-boot setup will create your user account, set the hostname, and then reboot into the normal login screen." >/dev/null 2>&1 || exit 0
+prompt_info "Welcome to EndeavourOS ARM for Xiaomi Pad 6.\n\nThis first-boot setup will create your user account, set the hostname, and then reboot into the normal login screen." || exit 0
 
 while :; do
     fullname="$(prompt_optional_text 'Full name (optional):' '')" || exit 0
@@ -507,12 +686,12 @@ while :; do
     username="$(printf '%s' "$username" | tr '[:upper:]' '[:lower:]')"
 
     if ! valid_username "$username"; then
-        kdialog --title "$TITLE" --error "Username must start with a letter or underscore and may contain lowercase letters, numbers, hyphens, or underscores." >/dev/null 2>&1 || true
+        prompt_error "Username must start with a letter or underscore and may contain lowercase letters, numbers, hyphens, or underscores."
         continue
     fi
 
     if id "$username" >/dev/null 2>&1; then
-        kdialog --title "$TITLE" --error "User '$username' already exists. Choose another username." >/dev/null 2>&1 || true
+        prompt_error "User '$username' already exists. Choose another username."
         continue
     fi
 
@@ -520,7 +699,7 @@ while :; do
     hostname="$(printf '%s' "$hostname" | tr '[:upper:]' '[:lower:]')"
 
     if ! valid_hostname "$hostname"; then
-        kdialog --title "$TITLE" --error "Hostname may only contain lowercase letters, numbers, and hyphens, and it must begin and end with a letter or number." >/dev/null 2>&1 || true
+        prompt_error "Hostname may only contain lowercase letters, numbers, and hyphens, and it must begin and end with a letter or number."
         continue
     fi
 
@@ -543,27 +722,64 @@ cat > /etc/hosts <<HOSTS
 127.0.1.1 $hostname.localdomain $hostname
 HOSTS
 
-rm -f "$AUTOLOGIN_CONF" "$AUTOSTART_FILE" "$SENTINEL"
+case "$PIPA_FIRSTBOOT_DM" in
+    plasmalogin)
+        rm -f /etc/plasmalogin.conf.d/10-firstboot-autologin.conf /etc/plasmalogin.conf.d/05-default-session.conf
+        ;;
+    gdm)
+        rm -f /etc/gdm/custom.conf.d/10-firstboot-autologin.conf
+        ;;
+esac
+rm -f "$AUTOSTART_FILE" "$SENTINEL"
 
-kdialog --title "$TITLE" --msgbox "Setup complete.\n\nUser '$username' was created, the hostname was set to '$hostname', and the system will now reboot." >/dev/null 2>&1 || true
+prompt_info "Setup complete.\n\nUser '$username' was created, the hostname was set to '$hostname', and the system will now reboot." || true
 systemctl reboot
 EOF
 
-install -Dm644 /dev/stdin "$ROOTFS_DIR/etc/plasmalogin.conf.d/10-firstboot-autologin.conf" <<'EOF'
+if [ "$DE_NAME" = "plasma" ]; then
+    SESSION_FILE="$(first_existing_file \
+        "$ROOTFS_DIR/usr/share/wayland-sessions/plasmawayland.desktop" \
+        "$ROOTFS_DIR/usr/share/wayland-sessions/plasma.desktop" \
+        "$ROOTFS_DIR/usr/share/xsessions/plasma.desktop" \
+    )"
+    SESSION_NAME="$(basename "$SESSION_FILE")"
+    FIRSTBOOT_DM="plasmalogin"
+
+    install -Dm644 /dev/stdin "$ROOTFS_DIR/etc/plasmalogin.conf.d/05-default-session.conf" <<EOF
+[Sessions]
+DefaultSession=$SESSION_NAME
+EOF
+
+    install -Dm644 /dev/stdin "$ROOTFS_DIR/etc/plasmalogin.conf.d/10-firstboot-autologin.conf" <<EOF
 [Autologin]
 User=root
-Session=plasma.desktop
+Session=$SESSION_NAME
 Relogin=false
 EOF
+else
+    SESSION_FILE="$(first_existing_file \
+        "$ROOTFS_DIR/usr/share/xsessions/gnome.desktop" \
+        "$ROOTFS_DIR/usr/share/xsessions/gnome-xorg.desktop" \
+        "$ROOTFS_DIR/usr/share/wayland-sessions/gnome.desktop" \
+    )"
+    SESSION_NAME="$(basename "$SESSION_FILE" .desktop)"
+    FIRSTBOOT_DM="gdm"
+
+    install -Dm644 /dev/stdin "$ROOTFS_DIR/etc/gdm/custom.conf.d/10-firstboot-autologin.conf" <<EOF
+[daemon]
+AutomaticLoginEnable=True
+AutomaticLogin=root
+DefaultSession=$SESSION_NAME
+EOF
+fi
+
+printf '%s\n' "$FIRSTBOOT_DM" > "$ROOTFS_DIR/etc/pipa-firstboot-dm"
 
 install -Dm644 /dev/stdin "$ROOTFS_DIR/root/.config/autostart/pipa-firstboot-setup.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=EndeavourOS Pipa First Boot Setup
 Exec=sh -lc 'sleep 3; exec /usr/local/bin/pipa-firstboot-setup'
-OnlyShowIn=KDE;
-X-KDE-Autostart-after=panel
-X-KDE-AutostartScript=true
 NoDisplay=true
 EOF
 
@@ -676,7 +892,7 @@ printf '%s\n' "$TARGET_KERNEL_CMDLINE" > "$ROOTFS_DIR/etc/cmdline"
 
 echo "### Setting up /etc/fstab..."
 cat > "$ROOTFS_DIR/etc/fstab" <<EOF
-LABEL=$ROOTFS_LABEL / ext4 defaults 0 1
+LABEL=$ROOTFS_LABEL / ext4 defaults,x-systemd.growfs 0 1
 LABEL=$BOOT_LABEL /boot ext4 defaults 0 2
 EOF
 
@@ -687,8 +903,17 @@ arch-chroot "$ROOTFS_DIR" systemctl enable power-profiles-daemon
 arch-chroot "$ROOTFS_DIR" systemctl enable pipa-power-profile@balanced.service
 arch-chroot "$ROOTFS_DIR" systemctl enable bootmac-bluetooth || true
 arch-chroot "$ROOTFS_DIR" systemctl enable pd-mapper rmtfs tqftpserv || true
-arch-chroot "$ROOTFS_DIR" systemctl enable hexagonrpcd-sdsp hexagonrpcd-adsp-rootpd iio-sensor-proxy pipa-audio-init || true
-arch-chroot "$ROOTFS_DIR" systemctl mask hexagonrpcd-adsp-sensorspd || true
+if [ "$PIPA_INCLUDE_SENSORS" = "1" ]; then
+    arch-chroot "$ROOTFS_DIR" systemctl enable \
+        pipa-sensors-persist \
+        hexagonrpcd-sdsp \
+        hexagonrpcd-adsp-rootpd \
+        hexagonrpcd-adsp-sensorspd \
+        iio-sensor-proxy \
+        pipa-audio-init || true
+else
+    arch-chroot "$ROOTFS_DIR" systemctl enable pipa-audio-init || true
+fi
 
 echo "### Configuring Plasma login and virtual keyboard defaults..."
 if [ "$DE_NAME" = "plasma" ]; then
@@ -816,7 +1041,7 @@ if [ -n "$GRUB_THEME_TMP" ]; then
     rm -rf "$GRUB_THEME_TMP"
 fi
 cat > "$BOOT_MNT/grub2/grub.cfg" <<EOF
-set default=0
+set default=1
 set timeout=5
 
 search --no-floppy --label --set=boot $BOOT_LABEL
@@ -963,9 +1188,9 @@ choose_from_menu() {
     local answer
     local index
 
-    echo "$prompt"
+    echo "$prompt" >&2
     for index in "${!options[@]}"; do
-        printf '  %d) %s\n' "$((index + 1))" "${options[$index]}"
+        printf '  %d) %s\n' "$((index + 1))" "${options[$index]}" >&2
     done
 
     while true; do
