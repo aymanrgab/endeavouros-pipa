@@ -307,7 +307,6 @@ if [ "$PIPA_INCLUDE_SENSORS" = "1" ]; then
         "usr/lib/libssc.so.0" \
         "usr/lib/udev/rules.d/81-libssc-xiaomi-pipa.rules" \
         "usr/share/hexagonrpcd/hexagonrpcd-sdsp.conf" \
-        "usr/share/hexagonrpcd/hexagonrpcd-adsp-rootpd.conf" \
         "usr/share/hexagonrpcd/hexagonrpcd-adsp-sensorspd.conf"
 fi
 ln -sf "Xiaomi Pad 6.conf" \
@@ -319,9 +318,7 @@ if [ "$PIPA_INCLUDE_SENSORS" = "1" ]; then
 [Unit]
 Wants=
 After=
-Wants=hexagonrpcd-adsp-rootpd.service
 Wants=hexagonrpcd-sdsp.service
-After=hexagonrpcd-adsp-rootpd.service
 After=hexagonrpcd-sdsp.service
 EOF
 fi
@@ -346,8 +343,8 @@ Description=Initialize Xiaomi Pad 6 ALSA state
 EOF
 if [ "$PIPA_INCLUDE_SENSORS" = "1" ]; then
 cat >> "$ROOTFS_DIR/usr/lib/systemd/system/pipa-audio-init.service" <<'EOF'
-After=systemd-udev-settle.service pd-mapper.service rmtfs.service tqftpserv.service hexagonrpcd-adsp-rootpd.service hexagonrpcd-sdsp.service
-Wants=systemd-udev-settle.service pd-mapper.service rmtfs.service tqftpserv.service hexagonrpcd-adsp-rootpd.service hexagonrpcd-sdsp.service
+After=systemd-udev-settle.service pd-mapper.service rmtfs.service tqftpserv.service hexagonrpcd-sdsp.service
+Wants=systemd-udev-settle.service pd-mapper.service rmtfs.service tqftpserv.service hexagonrpcd-sdsp.service
 EOF
 else
 cat >> "$ROOTFS_DIR/usr/lib/systemd/system/pipa-audio-init.service" <<'EOF'
@@ -386,7 +383,7 @@ install -Dm644 /dev/stdin "$ROOTFS_DIR/usr/lib/systemd/system/pipa-sensors-persi
 Description=Prepare Xiaomi Pad 6 sensor persist directories
 DefaultDependencies=no
 After=local-fs.target systemd-sysusers.service
-Before=hexagonrpcd-adsp-rootpd.service hexagonrpcd-sdsp.service hexagonrpcd-adsp-sensorspd.service iio-sensor-proxy.service
+Before=hexagonrpcd-sdsp.service hexagonrpcd-adsp-sensorspd.service iio-sensor-proxy.service
 Wants=systemd-sysusers.service
 
 [Service]
@@ -413,7 +410,6 @@ esac
 sleep 2
 
 /usr/local/bin/pipa-prepare-sensor-persist || true
-systemctl restart hexagonrpcd-adsp-rootpd.service || true
 systemctl restart hexagonrpcd-sdsp.service || true
 systemctl restart hexagonrpcd-adsp-sensorspd.service || true
 systemctl restart iio-sensor-proxy.service || true
@@ -907,13 +903,13 @@ if [ "$PIPA_INCLUDE_SENSORS" = "1" ]; then
     arch-chroot "$ROOTFS_DIR" systemctl enable \
         pipa-sensors-persist \
         hexagonrpcd-sdsp \
-        hexagonrpcd-adsp-rootpd \
         hexagonrpcd-adsp-sensorspd \
         iio-sensor-proxy \
         pipa-audio-init || true
 else
     arch-chroot "$ROOTFS_DIR" systemctl enable pipa-audio-init || true
 fi
+arch-chroot "$ROOTFS_DIR" systemctl mask hexagonrpcd-adsp-rootpd.service || true
 
 echo "### Configuring Plasma login and virtual keyboard defaults..."
 if [ "$DE_NAME" = "plasma" ]; then
