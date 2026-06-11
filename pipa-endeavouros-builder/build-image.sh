@@ -18,7 +18,6 @@ ROOTFS_LABEL="eos-pipa"
 BOOT_LABEL="boot"
 ESP_LABEL="EOSPIPAESP"
 TARGET_KERNEL_CMDLINE="root=LABEL=$ROOTFS_LABEL rw rootwait boot=LABEL=$BOOT_LABEL console=tty0 console=ttyS0 earlycon quiet splash"
-TARGET_KERNEL_DEBUG_CMDLINE="root=LABEL=$ROOTFS_LABEL rw rootwait boot=LABEL=$BOOT_LABEL console=tty0 console=ttyS0 earlycon ignore_loglevel loglevel=8 no_console_suspend rd.debug systemd.log_level=debug systemd.log_target=console plymouth.enable=0"
 PACMAN_CONF="$(pwd)/pacman-pipa.conf"
 EFI_TEMPLATE_DIR="$(pwd)/efi-template"
 VBMETA_DISABLED_IMG="$(pwd)/vbmeta-disabled.img"
@@ -29,6 +28,9 @@ PIPA_REPO_NAME="${PIPA_REPO_NAME:-pipa-pkgs}"
 PIPA_INCLUDE_SENSORS="${PIPA_INCLUDE_SENSORS:-1}"
 ESP_SIZE_MB=128
 BOOT_SIZE_MB=1024
+PIPA_META_PACKAGES=(
+    pipa-metapkg
+)
 PIPA_CORE_PACKAGES=(
     alsa-ucm-conf-sm8250
     bluez-git
@@ -53,7 +55,11 @@ if [ "$PIPA_INCLUDE_SENSORS" = "1" ]; then
     )
 fi
 
+
 cleanup() {
+    if mountpoint -q "$ROOTFS_DIR/boot"; then
+        umount "$ROOTFS_DIR/boot"
+    fi
     if mountpoint -q "$IMAGE_MNT"; then
         umount "$IMAGE_MNT"
     fi
@@ -75,17 +81,6 @@ first_existing_file() {
     local candidate
     for candidate in "$@"; do
         if [ -f "$candidate" ]; then
-            printf '%s\n' "$candidate"
-            return 0
-        fi
-    done
-    return 1
-}
-
-first_existing_dir() {
-    local candidate
-    for candidate in "$@"; do
-        if [ -d "$candidate" ]; then
             printf '%s\n' "$candidate"
             return 0
         fi
@@ -139,63 +134,6 @@ pathlib.Path(csv_path).write_bytes(b"\xff\xfe" + text.encode("utf-16le"))
 PY
 }
 
-write_grub_splash_png() {
-    local png_path="$1"
-
-    python - "$png_path" <<'PY'
-import pathlib
-import struct
-import zlib
-import sys
-
-png_path = pathlib.Path(sys.argv[1])
-width, height = 1280, 800
-
-def chunk(tag: bytes, data: bytes) -> bytes:
-    return (
-        struct.pack(">I", len(data))
-        + tag
-        + data
-        + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
-    )
-
-rows = []
-for y in range(height):
-    row = bytearray([0])
-    for x in range(width):
-        mix = (x * 255) // max(width - 1, 1)
-        mix2 = (y * 255) // max(height - 1, 1)
-
-        r = 24 + (56 * mix) // 255 + (18 * mix2) // 255
-        g = 8 + (18 * mix) // 255
-        b = 48 + (110 * mix) // 255
-
-        # Soft diagonal highlight for a more Endeavour-like splash.
-        band = abs((x * 10 // width) - (y * 10 // height))
-        if band <= 1:
-            r = min(255, r + 18)
-            g = min(255, g + 10)
-            b = min(255, b + 24)
-
-        # Bottom glow bar to frame the menu area.
-        if y > height - 140:
-            glow = min(60, y - (height - 140))
-            r = min(255, r + glow // 2)
-            g = min(255, g + glow // 4)
-            b = min(255, b + glow)
-
-        row.extend((r, g, b))
-    rows.append(bytes(row))
-
-raw = b"".join(rows)
-png = b"\x89PNG\r\n\x1a\n"
-png += chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
-png += chunk(b"IDAT", zlib.compress(raw, level=9))
-png += chunk(b"IEND", b"")
-png_path.write_bytes(png)
-PY
-}
-
 if [ ! -f "$EFI_TEMPLATE_DIR/EFI/BOOT/BOOTAA64.EFI" ] || [ ! -f "$EFI_TEMPLATE_DIR/EFI/endeavour/grubaa64.efi" ]; then
     echo "Missing Endeavour-style EFI template files in $EFI_TEMPLATE_DIR"
     exit 1
@@ -228,7 +166,7 @@ BASE_PACKAGES=(
     archlinuxarm-keyring
     alsa-ucm-conf alsa-utils
     pipewire pipewire-alsa pipewire-pulse pipewire-jack wireplumber
-    power-profiles-daemon upower modemmanager xdg-user-dirs
+    upower modemmanager xdg-user-dirs
     iptables noto-fonts qt6-virtualkeyboard
     dracut
     fish fastfetch zenity
@@ -238,18 +176,18 @@ BASE_PACKAGES=(
 )
 
 # Install the published Pipa packages directly from the hosted repo.
-# `pipa-metapkg` pulls the core tablet stack from the repo. Only list
-# additional repo packages here that do not overlap with that dependency set.
+# `pipa-metapkg` is included so the image carries the umbrella tablet package,
+# while the explicit core list keeps the current builder selection unchanged.
 PIPA_REPO_PACKAGES=(
     box64
     gamescope
     mangohud-git
     mkbootimg-pipa
-    pipa-kernel-flasher-hook
     swclock-offset
     widevine
     wine-aarch64
 )
+mapfile -t QUALIFIED_PIPA_META_PACKAGES < <(qualify_repo_targets "${PIPA_META_PACKAGES[@]}")
 mapfile -t QUALIFIED_PIPA_CORE_PACKAGES < <(qualify_repo_targets "${PIPA_CORE_PACKAGES[@]}")
 mapfile -t QUALIFIED_PIPA_REPO_PACKAGES < <(qualify_repo_targets "${PIPA_REPO_PACKAGES[@]}")
 
@@ -289,245 +227,34 @@ printf '%s\n' "$TARGET_KERNEL_CMDLINE" > "$ROOTFS_DIR/boot/cmdline.txt"
 write_placeholder_initramfs "$ROOTFS_DIR/boot/initramfs.img"
 
 echo "### Bootstrapping rootfs with pacstrap..."
-pacstrap -C "$PACMAN_CONF" -KGM "$ROOTFS_DIR" "${BASE_PACKAGES[@]}" "${QUALIFIED_PIPA_CORE_PACKAGES[@]}" "${QUALIFIED_PIPA_REPO_PACKAGES[@]}" "${DESKTOP_PACKAGES[@]}"
+pacstrap -C "$PACMAN_CONF" -KGM "$ROOTFS_DIR" "${BASE_PACKAGES[@]}" "${QUALIFIED_PIPA_META_PACKAGES[@]}" "${QUALIFIED_PIPA_CORE_PACKAGES[@]}" "${QUALIFIED_PIPA_REPO_PACKAGES[@]}" "${DESKTOP_PACKAGES[@]}"
 
 echo "### Writing target pacman configuration..."
 cp "$PACMAN_CONF" "$ROOTFS_DIR/etc/pacman.conf"
 
 echo "### Validating repo-provided Pipa audio configuration..."
 assert_required_rootfs_files \
+    "usr/local/bin/pipa-refresh-grub-config" \
     "usr/share/alsa/ucm2/conf.d/sm8250/Xiaomi Pad 6.conf" \
+    "usr/share/alsa/ucm2/conf.d/sm8250/sm8250.conf" \
+    "usr/share/alsa/ucm2/conf.d/sm8250/Xiaomi-Pad6-pipa-M82.conf" \
     "usr/share/alsa/ucm2/Qualcomm/sm8250/HiFi_pipa.conf" \
-    "usr/share/wireplumber/wireplumber.conf.d/51-pipa.conf"
+    "usr/share/wireplumber/wireplumber.conf.d/51-pipa.conf" \
+    "usr/local/bin/pipa-audio-init" \
+    "usr/lib/systemd/system/pipa-audio-init.service"
 if [ "$PIPA_INCLUDE_SENSORS" = "1" ]; then
     echo "### Validating repo-provided Pipa sensor configuration..."
     assert_required_rootfs_files \
         "usr/lib/libssc.so.0" \
         "usr/lib/udev/rules.d/81-libssc-xiaomi-pipa.rules" \
+        "usr/local/bin/pipa-prepare-sensor-persist" \
         "usr/share/hexagonrpcd/hexagonrpcd-sdsp.conf" \
-        "usr/share/hexagonrpcd/hexagonrpcd-adsp-sensorspd.conf"
+        "usr/share/hexagonrpcd/hexagonrpcd-adsp-sensorspd.conf" \
+        "usr/lib/systemd/system/pipa-sensors-persist.service" \
+        "usr/lib/systemd/system-sleep/pipa-sensors-resume" \
+        "usr/lib/systemd/system/iio-sensor-proxy.service.d/10-pipa-audio.conf" \
+        "usr/lib/systemd/system/pipa-audio-init.service.d/10-sensors.conf"
 fi
-ln -sf "Xiaomi Pad 6.conf" \
-    "$ROOTFS_DIR/usr/share/alsa/ucm2/conf.d/sm8250/sm8250.conf"
-ln -sf "Xiaomi Pad 6.conf" \
-    "$ROOTFS_DIR/usr/share/alsa/ucm2/conf.d/sm8250/Xiaomi-Pad6-pipa-M82.conf"
-if [ "$PIPA_INCLUDE_SENSORS" = "1" ]; then
-    install -Dm644 /dev/stdin "$ROOTFS_DIR/etc/systemd/system/iio-sensor-proxy.service.d/10-pipa-audio.conf" <<'EOF'
-[Unit]
-Wants=
-After=
-Wants=hexagonrpcd-sdsp.service
-After=hexagonrpcd-sdsp.service
-EOF
-fi
-
-install -Dm755 /dev/stdin "$ROOTFS_DIR/usr/local/bin/pipa-audio-init" <<'EOF'
-#!/bin/sh
-set -eu
-
-for _ in $(seq 1 20); do
-    if [ -r /proc/asound/cards ] && ! grep -q '^--- no soundcards ---$' /proc/asound/cards; then
-        break
-    fi
-    sleep 1
-done
-
-alsactl init 0 || true
-EOF
-
-install -Dm644 /dev/stdin "$ROOTFS_DIR/usr/lib/systemd/system/pipa-audio-init.service" <<'EOF'
-[Unit]
-Description=Initialize Xiaomi Pad 6 ALSA state
-EOF
-if [ "$PIPA_INCLUDE_SENSORS" = "1" ]; then
-cat >> "$ROOTFS_DIR/usr/lib/systemd/system/pipa-audio-init.service" <<'EOF'
-After=systemd-udev-settle.service pd-mapper.service rmtfs.service tqftpserv.service hexagonrpcd-sdsp.service
-Wants=systemd-udev-settle.service pd-mapper.service rmtfs.service tqftpserv.service hexagonrpcd-sdsp.service
-EOF
-else
-cat >> "$ROOTFS_DIR/usr/lib/systemd/system/pipa-audio-init.service" <<'EOF'
-After=systemd-udev-settle.service pd-mapper.service rmtfs.service tqftpserv.service
-Wants=systemd-udev-settle.service pd-mapper.service rmtfs.service tqftpserv.service
-EOF
-fi
-cat >> "$ROOTFS_DIR/usr/lib/systemd/system/pipa-audio-init.service" <<'EOF'
-Before=display-manager.service
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/bin/pipa-audio-init
-RemainAfterExit=yes
-
-[Install]
-WantedBy=multi-user.target
-EOF
-if [ "$PIPA_INCLUDE_SENSORS" = "1" ]; then
-install -Dm755 /dev/stdin "$ROOTFS_DIR/usr/local/bin/pipa-prepare-sensor-persist" <<'EOF'
-#!/bin/sh
-set -eu
-
-for dir in \
-    /mnt/vendor/persist \
-    /mnt/vendor/persist/sensors \
-    /mnt/vendor/persist/sensors/registry \
-    /mnt/vendor/persist/sensors/registry/registry
-do
-    install -d -m 0775 -o fastrpc -g fastrpc "$dir"
-done
-EOF
-
-install -Dm644 /dev/stdin "$ROOTFS_DIR/usr/lib/systemd/system/pipa-sensors-persist.service" <<'EOF'
-[Unit]
-Description=Prepare Xiaomi Pad 6 sensor persist directories
-DefaultDependencies=no
-After=local-fs.target systemd-sysusers.service
-Before=hexagonrpcd-sdsp.service hexagonrpcd-adsp-sensorspd.service iio-sensor-proxy.service
-Wants=systemd-sysusers.service
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/bin/pipa-prepare-sensor-persist
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-install -Dm755 /dev/stdin "$ROOTFS_DIR/usr/lib/systemd/system-sleep/pipa-sensors-resume" <<'EOF'
-#!/bin/sh
-set -eu
-
-case "${1:-}/${2:-}" in
-    post/*)
-        ;;
-    *)
-        exit 0
-        ;;
-esac
-
-# Give the fastrpc devices a moment to reappear after resume.
-sleep 2
-
-/usr/local/bin/pipa-prepare-sensor-persist || true
-systemctl restart hexagonrpcd-sdsp.service || true
-systemctl restart hexagonrpcd-adsp-sensorspd.service || true
-systemctl restart iio-sensor-proxy.service || true
-EOF
-fi
-
-install -Dm755 /dev/stdin "$ROOTFS_DIR/usr/local/bin/pipa-set-power-profile" <<'EOF'
-#!/bin/sh
-set -eu
-
-profile="${1:-}"
-
-case "$profile" in
-    battery)
-        governor_preferences="powersave schedutil ondemand conservative performance"
-        max_percent=60
-        ;;
-    balanced)
-        governor_preferences="schedutil ondemand conservative powersave performance"
-        max_percent=85
-        ;;
-    performance)
-        governor_preferences="performance schedutil ondemand conservative powersave"
-        max_percent=100
-        ;;
-    *)
-        echo "Usage: $0 {battery|balanced|performance}" >&2
-        exit 1
-        ;;
-esac
-
-pick_governor() {
-    available_governors="$1"
-
-    for candidate in $governor_preferences; do
-        case " $available_governors " in
-            *" $candidate "*) printf '%s\n' "$candidate"; return 0 ;;
-        esac
-    done
-
-    return 1
-}
-
-applied=0
-for policy in /sys/devices/system/cpu/cpufreq/policy*; do
-    [ -d "$policy" ] || continue
-    applied=1
-
-    available_governors="$(cat "$policy/scaling_available_governors" 2>/dev/null || true)"
-    governor="$(pick_governor "$available_governors" || cat "$policy/scaling_governor")"
-    cpuinfo_max="$(cat "$policy/cpuinfo_max_freq")"
-    cpuinfo_min="$(cat "$policy/cpuinfo_min_freq" 2>/dev/null || cat "$policy/scaling_min_freq")"
-    target_max=$((cpuinfo_max * max_percent / 100))
-
-    if [ "$target_max" -lt "$cpuinfo_min" ]; then
-        target_max="$cpuinfo_min"
-    fi
-
-    if [ -w "$policy/scaling_governor" ]; then
-        printf '%s\n' "$governor" > "$policy/scaling_governor"
-    fi
-
-    if [ -w "$policy/scaling_min_freq" ]; then
-        printf '%s\n' "$cpuinfo_min" > "$policy/scaling_min_freq"
-    fi
-
-    if [ -w "$policy/scaling_max_freq" ]; then
-        printf '%s\n' "$target_max" > "$policy/scaling_max_freq"
-    fi
-done
-
-if [ "$applied" -eq 0 ]; then
-    echo "No cpufreq policies were found" >&2
-    exit 1
-fi
-EOF
-
-install -Dm755 /dev/stdin "$ROOTFS_DIR/usr/local/bin/pipa-power-battery" <<'EOF'
-#!/bin/sh
-set -eu
-if [ "$(id -u)" -eq 0 ]; then
-    exec /usr/local/bin/pipa-set-power-profile battery
-fi
-exec sudo /usr/local/bin/pipa-set-power-profile battery
-EOF
-
-install -Dm755 /dev/stdin "$ROOTFS_DIR/usr/local/bin/pipa-power-balanced" <<'EOF'
-#!/bin/sh
-set -eu
-if [ "$(id -u)" -eq 0 ]; then
-    exec /usr/local/bin/pipa-set-power-profile balanced
-fi
-exec sudo /usr/local/bin/pipa-set-power-profile balanced
-EOF
-
-install -Dm755 /dev/stdin "$ROOTFS_DIR/usr/local/bin/pipa-power-performance" <<'EOF'
-#!/bin/sh
-set -eu
-if [ "$(id -u)" -eq 0 ]; then
-    exec /usr/local/bin/pipa-set-power-profile performance
-fi
-exec sudo /usr/local/bin/pipa-set-power-profile performance
-EOF
-
-install -Dm644 /dev/stdin "$ROOTFS_DIR/usr/lib/systemd/system/pipa-power-profile@.service" <<'EOF'
-[Unit]
-Description=Apply Xiaomi Pad 6 power profile %I
-ConditionPathExists=/sys/devices/system/cpu/cpufreq
-After=systemd-udev-settle.service
-Wants=systemd-udev-settle.service
-Before=display-manager.service
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/bin/pipa-set-power-profile %I
-RemainAfterExit=yes
-
-[Install]
-WantedBy=multi-user.target
-EOF
 
 install -Dm755 /dev/stdin "$ROOTFS_DIR/usr/local/bin/pipa-firstboot-setup" <<'EOF'
 #!/bin/sh
@@ -799,12 +526,6 @@ KERNEL_IMAGE_UNCOMPRESSED="$(first_existing_file \
     "$ROOTFS_DIR/boot/vmlinuz-$KERNEL_VER.uncompressed" \
     || true \
 )"
-KERNEL_IMAGE_DTB="$ROOTFS_DIR/boot/$(basename "$KERNEL_IMAGE").dtb"
-if [ -n "${KERNEL_IMAGE_UNCOMPRESSED:-}" ]; then
-    KERNEL_IMAGE_UNCOMPRESSED_DTB="$ROOTFS_DIR/boot/$(basename "$KERNEL_IMAGE_UNCOMPRESSED").dtb"
-else
-    KERNEL_IMAGE_UNCOMPRESSED_DTB=""
-fi
 INITRAMFS_IMAGE="$(first_existing_file \
     "$ROOTFS_DIR/boot/initramfs-$KERNEL_VER.img" \
     "$ROOTFS_DIR/boot/initramfs.img" \
@@ -833,10 +554,7 @@ if ! arch-chroot "$ROOTFS_DIR" sh -c 'command -v dracut >/dev/null'; then
     echo "dracut is required in the target rootfs but was not found" >&2
     exit 1
 fi
-mkdir -p "$ROOTFS_DIR/etc/dracut.conf.d"
-cat > "$ROOTFS_DIR/etc/dracut.conf.d/pipa.conf" <<EOF
-i18n_vars="/etc/locale.conf /etc/vconsole.conf"
-EOF
+assert_required_rootfs_files "usr/lib/dracut/dracut.conf.d/10-pipa.conf"
 arch-chroot "$ROOTFS_DIR" dracut --force --kver "$KERNEL_VER" "/boot/initramfs-$KERNEL_VER.img"
 
 INITRAMFS_IMAGE="$(first_existing_file \
@@ -863,21 +581,6 @@ if [ "$(stat -c '%s' "$ROOTFS_DIR/boot/initramfs.img")" -lt 1048576 ]; then
     exit 1
 fi
 
-echo "### Preparing kernel+dtb images..."
-cat "$KERNEL_IMAGE" "$DTB_IMAGE" > "$KERNEL_IMAGE_DTB"
-if [ -n "${KERNEL_IMAGE_UNCOMPRESSED:-}" ] && [ -f "$KERNEL_IMAGE_UNCOMPRESSED" ]; then
-    cat "$KERNEL_IMAGE_UNCOMPRESSED" "$DTB_IMAGE" > "$KERNEL_IMAGE_UNCOMPRESSED_DTB"
-fi
-
-GRUB_PRIMARY_KERNEL="$(basename "$KERNEL_IMAGE_DTB")"
-GRUB_SEPARATE_DTB_KERNEL="$(basename "$KERNEL_IMAGE")"
-if [ -n "${KERNEL_IMAGE_UNCOMPRESSED:-}" ] && [ -f "$KERNEL_IMAGE_UNCOMPRESSED" ]; then
-    GRUB_SEPARATE_DTB_KERNEL="$(basename "$KERNEL_IMAGE_UNCOMPRESSED")"
-fi
-if [ -n "${KERNEL_IMAGE_UNCOMPRESSED_DTB:-}" ] && [ -f "$KERNEL_IMAGE_UNCOMPRESSED_DTB" ]; then
-    GRUB_PRIMARY_KERNEL="$(basename "$KERNEL_IMAGE_UNCOMPRESSED_DTB")"
-fi
-
 echo "### Setting up /etc/cmdline..."
 printf '%s\n' "$TARGET_KERNEL_CMDLINE" > "$ROOTFS_DIR/etc/cmdline"
 
@@ -890,8 +593,7 @@ EOF
 echo "### Configuring system services..."
 arch-chroot "$ROOTFS_DIR" systemctl enable "$DISPLAY_MANAGER"
 arch-chroot "$ROOTFS_DIR" systemctl enable NetworkManager sshd bluetooth systemd-resolved systemd-timesyncd
-arch-chroot "$ROOTFS_DIR" systemctl enable power-profiles-daemon
-arch-chroot "$ROOTFS_DIR" systemctl enable pipa-power-profile@balanced.service
+arch-chroot "$ROOTFS_DIR" systemctl enable tuned tuned-ppd
 arch-chroot "$ROOTFS_DIR" systemctl enable bootmac-bluetooth || true
 arch-chroot "$ROOTFS_DIR" systemctl enable pd-mapper rmtfs tqftpserv || true
 if [ "$PIPA_INCLUDE_SENSORS" = "1" ]; then
@@ -980,95 +682,36 @@ echo "### Creating dedicated boot image..."
 truncate -s "${BOOT_SIZE_MB}M" "$IMAGE_DIR/$IMAGE_NAME/endeavouros_boot.raw"
 mkfs.ext4 -F -L "$BOOT_LABEL" -O ^64bit,^metadata_csum,^metadata_csum_seed,^orphan_file "$IMAGE_DIR/$IMAGE_NAME/endeavouros_boot.raw"
 mount -o loop "$IMAGE_DIR/$IMAGE_NAME/endeavouros_boot.raw" "$BOOT_MNT"
-mkdir -p "$BOOT_MNT/boot/devicetree" "$BOOT_MNT/dtbs/qcom" "$BOOT_MNT/grub2/themes/endeavour" "$BOOT_MNT/efi"
-cp "$KERNEL_IMAGE" "$BOOT_MNT/boot/"
 cp "$KERNEL_IMAGE" "$BOOT_MNT/Image.gz"
-cp "$KERNEL_IMAGE_DTB" "$BOOT_MNT/boot/"
-cp "$INITRAMFS_IMAGE" "$BOOT_MNT/boot/"
-cp "$INITRAMFS_IMAGE" "$BOOT_MNT/initramfs.img"
-if [ -f "$ROOTFS_DIR/boot/System.map-$KERNEL_VER" ]; then
-    cp "$ROOTFS_DIR/boot/System.map-$KERNEL_VER" "$BOOT_MNT/boot/"
-fi
-if [ -f "$ROOTFS_DIR/boot/config-$KERNEL_VER" ]; then
-    cp "$ROOTFS_DIR/boot/config-$KERNEL_VER" "$BOOT_MNT/boot/"
-fi
-cp "$DTB_IMAGE" "$BOOT_MNT/boot/devicetree/"
-cp "$DTB_IMAGE" "$BOOT_MNT/dtbs/qcom/"
-if [ -f "$KERNEL_IMAGE_UNCOMPRESSED" ]; then
-    cp "$KERNEL_IMAGE_UNCOMPRESSED" "$BOOT_MNT/boot/"
+if [ -n "${KERNEL_IMAGE_UNCOMPRESSED:-}" ] && [ -f "$KERNEL_IMAGE_UNCOMPRESSED" ]; then
     cp "$KERNEL_IMAGE_UNCOMPRESSED" "$BOOT_MNT/Image"
 fi
-if [ -f "$KERNEL_IMAGE_UNCOMPRESSED_DTB" ]; then
-    cp "$KERNEL_IMAGE_UNCOMPRESSED_DTB" "$BOOT_MNT/boot/"
+cp "$INITRAMFS_IMAGE" "$BOOT_MNT/initramfs-$KERNEL_VER.img"
+mkdir -p "$BOOT_MNT/dtbs/qcom" "$BOOT_MNT/grub2" "$BOOT_MNT/efi"
+if [ -f "$ROOTFS_DIR/boot/System.map-$KERNEL_VER" ]; then
+    cp "$ROOTFS_DIR/boot/System.map-$KERNEL_VER" "$BOOT_MNT/"
+fi
+if [ -f "$ROOTFS_DIR/boot/config-$KERNEL_VER" ]; then
+    cp "$ROOTFS_DIR/boot/config-$KERNEL_VER" "$BOOT_MNT/"
+fi
+shopt -s nullglob
+dtb_candidates=("$ROOTFS_DIR"/boot/dtbs/qcom/sm8250-xiaomi-pipa*.dtb)
+shopt -u nullglob
+if [ "${#dtb_candidates[@]}" -gt 0 ]; then
+    cp "${dtb_candidates[@]}" "$BOOT_MNT/dtbs/qcom/"
+else
+    cp "$DTB_IMAGE" "$BOOT_MNT/dtbs/qcom/"
 fi
 printf '%s\n' "$TARGET_KERNEL_CMDLINE" > "$BOOT_MNT/cmdline.txt"
-GRUB_THEME_SOURCE="$(first_existing_dir \
-    "$ROOTFS_DIR/usr/share/grub/themes/EndeavourOS" \
-    "$ROOTFS_DIR/usr/share/grub/themes/endeavouros" \
-    "$ROOTFS_DIR/boot/grub/themes/EndeavourOS" \
-    "$ROOTFS_DIR/boot/grub/themes/endeavouros" \
-    || true \
-)"
-GRUB_THEME_NAME=""
-if [ -n "$GRUB_THEME_SOURCE" ]; then
-    GRUB_THEME_NAME="$(basename "$GRUB_THEME_SOURCE")"
-    rm -rf "$BOOT_MNT/grub2/themes/$GRUB_THEME_NAME"
-    cp -r "$GRUB_THEME_SOURCE" "$BOOT_MNT/grub2/themes/"
-else
-    write_grub_splash_png "$BOOT_MNT/grub2/themes/endeavour/background.png"
+mount --move "$BOOT_MNT" "$ROOTFS_DIR/boot"
+arch-chroot "$ROOTFS_DIR" env \
+    PIPA_INITRAMFS_SOURCE="/boot/initramfs-$KERNEL_VER.img" \
+    /usr/local/bin/pipa-refresh-grub-config
+if [ ! -f "$ROOTFS_DIR/boot/grub2/grub.cfg" ]; then
+    echo "pipa-grub-config did not generate /boot/grub2/grub.cfg" >&2
+    exit 1
 fi
-cat > "$BOOT_MNT/grub2/grub.cfg" <<EOF
-set default=1
-set timeout=5
-
-search --no-floppy --label --set=boot $BOOT_LABEL
-set root=(\$boot)
-
-if loadfont unicode; then
-    set gfxpayload=keep
-    terminal_output gfxterm
-fi
-EOF
-if [ -n "$GRUB_THEME_NAME" ] && [ -f "$BOOT_MNT/grub2/themes/$GRUB_THEME_NAME/theme.txt" ]; then
-cat >> "$BOOT_MNT/grub2/grub.cfg" <<EOF
-set theme=(\$boot)/grub2/themes/$GRUB_THEME_NAME/theme.txt
-EOF
-else
-cat >> "$BOOT_MNT/grub2/grub.cfg" <<EOF
-if background_image -m stretch (\$boot)/grub2/themes/endeavour/background.png; then
-    set color_normal=white/black
-    set color_highlight=black/light-cyan
-fi
-set menu_color_normal=white/black
-set menu_color_highlight=black/light-cyan
-EOF
-fi
-cat >> "$BOOT_MNT/grub2/grub.cfg" <<EOF
-
-menuentry "EndeavourOS ARM (Pipa)" {
-    linux (\$boot)/boot/$GRUB_PRIMARY_KERNEL root=LABEL=$ROOTFS_LABEL rw rootwait boot=LABEL=$BOOT_LABEL console=tty0 console=ttyS0 earlycon quiet splash
-    initrd (\$boot)/boot/$(basename "$INITRAMFS_IMAGE")
-}
-
-menuentry "EndeavourOS ARM (Pipa) - Separate DTB Fallback" {
-    devicetree (\$boot)/boot/devicetree/sm8250-xiaomi-pipa.dtb
-    linux (\$boot)/boot/$GRUB_SEPARATE_DTB_KERNEL root=LABEL=$ROOTFS_LABEL rw rootwait boot=LABEL=$BOOT_LABEL console=tty0 console=ttyS0 earlycon quiet splash
-    initrd (\$boot)/boot/$(basename "$INITRAMFS_IMAGE")
-}
-
-menuentry "EndeavourOS ARM (Pipa) - Gzipped Kernel Fallback" {
-    devicetree (\$boot)/boot/devicetree/sm8250-xiaomi-pipa.dtb
-    linux (\$boot)/boot/$(basename "$KERNEL_IMAGE") root=LABEL=$ROOTFS_LABEL rw rootwait boot=LABEL=$BOOT_LABEL console=tty0 console=ttyS0 earlycon quiet splash
-    initrd (\$boot)/boot/$(basename "$INITRAMFS_IMAGE")
-}
-
-menuentry "EndeavourOS ARM (Pipa) - Debug Verbose" {
-    devicetree (\$boot)/boot/devicetree/sm8250-xiaomi-pipa.dtb
-    linux (\$boot)/boot/$GRUB_SEPARATE_DTB_KERNEL $TARGET_KERNEL_DEBUG_CMDLINE
-    initrd (\$boot)/boot/$(basename "$INITRAMFS_IMAGE")
-}
-EOF
-umount "$BOOT_MNT"
+umount "$ROOTFS_DIR/boot"
 
 echo "### Creating EFI system partition image..."
 truncate -s "${ESP_SIZE_MB}M" "$IMAGE_DIR/$IMAGE_NAME/endeavouros_esp.raw"
@@ -1149,14 +792,74 @@ announce "This mode flashes EndeavourOS rootfs to userdata."
 announce "Android userdata will be overwritten."
 echo
 
+ERASE_DTBO="${ERASE_DTBO:-}"
+FLASH_VBMETA="${FLASH_VBMETA:-}"
+
+choose_yes_no() {
+    local prompt="$1"
+    local default_answer="$2"
+    local answer
+
+    while true; do
+        read -r -p "$prompt [$default_answer]: " answer
+        if [ -z "$answer" ]; then
+            answer="$default_answer"
+        fi
+
+        case "$answer" in
+            y|Y|yes|YES)
+                printf 'yes\n'
+                return 0
+                ;;
+            n|N|no|NO)
+                printf 'no\n'
+                return 0
+                ;;
+        esac
+
+        echo "Please answer yes or no."
+    done
+}
+
 announce "Verifying connected device"
 fastboot getvar product 2>&1 | grep pipa
 
-announce "Erasing dtbo_ab"
-fastboot erase dtbo_ab
+if [ -z "$ERASE_DTBO" ]; then
+    ERASE_DTBO="$(choose_yes_no 'Erase dtbo_ab before flashing?' 'no')"
+fi
 
-announce "Flashing vbmeta_ab"
-fastboot flash vbmeta_ab vbmeta-disabled.img
+if [ -z "$FLASH_VBMETA" ]; then
+    FLASH_VBMETA="$(choose_yes_no 'Flash disabled vbmeta to vbmeta_ab?' 'no')"
+fi
+
+announce "Flash plan"
+echo "Erase dtbo_ab         -> $ERASE_DTBO"
+echo "Flash vbmeta_ab       -> $FLASH_VBMETA"
+echo "Mu-Silicium boot      -> boot_ab"
+echo "EndeavourOS EFI image -> rawdump"
+echo "EndeavourOS boot      -> cust"
+echo "EndeavourOS rootfs    -> userdata"
+echo
+
+read -r -p "Proceed with flashing? [Y/n]: " CONFIRM_FLASH
+case "${CONFIRM_FLASH:-Y}" in
+    y|Y|yes|YES|"")
+        ;;
+    *)
+        echo "Aborted."
+        exit 0
+        ;;
+esac
+
+if [ "$ERASE_DTBO" = "yes" ]; then
+    announce "Erasing dtbo_ab"
+    fastboot erase dtbo_ab
+fi
+
+if [ "$FLASH_VBMETA" = "yes" ]; then
+    announce "Flashing vbmeta_ab"
+    fastboot flash vbmeta_ab vbmeta-disabled.img
+fi
 
 announce "Flashing Mu-Silicium boot image to boot_ab"
 fastboot flash boot_ab silicium.img
@@ -1232,6 +935,7 @@ echo
 BOOT_SLOT_TARGET="${BOOT_SLOT_TARGET:-}"
 ROOTFS_PARTITION="${ROOTFS_PARTITION:-}"
 ERASE_DTBO="${ERASE_DTBO:-}"
+FLASH_VBMETA="${FLASH_VBMETA:-}"
 ESP_PARTITION="rawdump"
 BOOT_PARTITION="cust"
 
@@ -1248,8 +952,14 @@ fi
 
 if [ -z "$ERASE_DTBO" ]; then
     ERASE_DTBO="$(choose_from_menu 'Erase dtbo_ab before flashing?' 1 \
-        'yes' \
-        'no')"
+        'no' \
+        'yes')"
+fi
+
+if [ -z "$FLASH_VBMETA" ]; then
+    FLASH_VBMETA="$(choose_from_menu 'Flash disabled vbmeta to vbmeta_ab?' 1 \
+        'no' \
+        'yes')"
 fi
 
 case "$BOOT_SLOT_TARGET" in
@@ -1273,6 +983,19 @@ case "$ERASE_DTBO" in
         ;;
 esac
 
+case "$FLASH_VBMETA" in
+    yes|y|Y)
+        FLASH_VBMETA="yes"
+        ;;
+    no|n|N)
+        FLASH_VBMETA="no"
+        ;;
+    *)
+        echo "FLASH_VBMETA must be yes or no" >&2
+        exit 1
+        ;;
+esac
+
 if [[ ! "$ROOTFS_PARTITION" =~ ^[A-Za-z0-9._-]+$ ]]; then
     echo "Invalid root filesystem partition name: $ROOTFS_PARTITION" >&2
     exit 1
@@ -1288,11 +1011,12 @@ fi
 
 announce "Flash plan"
 echo "vbmeta image          -> vbmeta_ab"
-echo "Mu-Silicium boot      -> $BOOT_SLOT_TARGET"
+echo "Flash vbmeta_ab       -> $FLASH_VBMETA"
 echo "EndeavourOS EFI image -> $ESP_PARTITION"
 echo "EndeavourOS boot      -> $BOOT_PARTITION"
 echo "EndeavourOS rootfs    -> $ROOTFS_PARTITION"
 echo "Erase dtbo_ab         -> $ERASE_DTBO"
+echo
 echo
 
 read -r -p "Proceed with flashing? [Y/n]: " CONFIRM_FLASH
@@ -1305,8 +1029,10 @@ case "${CONFIRM_FLASH:-Y}" in
         ;;
 esac
 
-announce "Flashing vbmeta_ab"
-fastboot flash vbmeta_ab vbmeta-disabled.img
+if [ "$FLASH_VBMETA" = "yes" ]; then
+    announce "Flashing vbmeta_ab"
+    fastboot flash vbmeta_ab vbmeta-disabled.img
+fi
 
 announce "Flashing Mu-Silicium boot image to $BOOT_SLOT_TARGET"
 fastboot flash "$BOOT_SLOT_TARGET" silicium.img

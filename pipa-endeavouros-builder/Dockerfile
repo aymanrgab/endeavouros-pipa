@@ -1,6 +1,6 @@
 FROM menci/archlinuxarm:base-devel
 
-# Initialize keyring and install dependencies for building and image creation.
+# Initialize keyring and install dependencies for image creation.
 # Docker CI lacks the kernel features pacman uses for sandboxing, so the option
 # must live inside the [options] section or pacman will ignore it.
 RUN pacman-key --init && \
@@ -11,14 +11,10 @@ RUN pacman-key --init && \
     pacman -Sy --noconfirm archlinuxarm-keyring && \
     pacman -Su --noconfirm && \
     pacman -S --noconfirm \
-    git sudo wget rsync \
+    git wget rsync \
     arch-install-scripts e2fsprogs dosfstools mtools zip unzip \
     bc bison flex cpio kmod python tar xz meson ninja cmake \
     glib2 libgudev polkit libqmi protobuf-c dracut android-tools grub
-
-# Set up a non-root user for makepkg
-RUN useradd -m -G wheel builder && \
-    echo "%wheel ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
 
 WORKDIR /build
 
@@ -26,7 +22,7 @@ WORKDIR /build
 COPY . /build/
 
 # Make scripts executable
-RUN chmod +x *.sh && chown -R builder:builder /build
+RUN chmod +x *.sh
 
 CMD []
 ENTRYPOINT ["/bin/bash", "./build-image.sh"]
