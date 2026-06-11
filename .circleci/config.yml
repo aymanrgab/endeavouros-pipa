@@ -26,14 +26,14 @@ jobs:
               -v "$PWD/images:/build/images" \
               -v "/dev:/dev" \
               pipa-endeavouros-builder plasma
-      # - run:
-      #     name: Build GNOME image
-      #     no_output_timeout: 90m
-      #     command: |
-      #       docker run --privileged \
-      #         -v "$PWD/images:/build/images" \
-      #         -v "/dev:/dev" \
-      #         pipa-endeavouros-builder gnome
+      - run:
+          name: Build GNOME image
+          no_output_timeout: 90m
+          command: |
+            docker run --privileged \
+              -v "$PWD/images:/build/images" \
+              -v "/dev:/dev" \
+              pipa-endeavouros-builder gnome
       - store_artifacts:
           path: images
 

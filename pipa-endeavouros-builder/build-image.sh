@@ -25,8 +25,6 @@ VBMETA_DISABLED_IMG="$(pwd)/vbmeta-disabled.img"
 PIPA_REPO_URL="${PIPA_REPO_URL:-https://thespider2.github.io/pipa-pkgs/repo/}"
 SILICIUM_URL="https://github.com/onesaladleaf/Mu-Silicium/releases/download/v3.5-pocketblue/Mu-pipa.img"
 SILICIUM_SHA256="ea3e1e123beea7ee5394295bdfee75054711d4734e9403831fda7f037fc900b6"
-GRUB_THEME_ARCHIVE_URL="${GRUB_THEME_ARCHIVE_URL:-https://codeload.github.com/EndeavourOS-archive/grub2-theme-endeavouros/tar.gz/refs/heads/main}"
-GRUB_GFXMODE="${GRUB_GFXMODE:-1280x800,1024x768,auto}"
 PIPA_REPO_NAME="${PIPA_REPO_NAME:-pipa-pkgs}"
 PIPA_INCLUDE_SENSORS="${PIPA_INCLUDE_SENSORS:-1}"
 ESP_SIZE_MB=128
@@ -831,18 +829,15 @@ echo 'LANG=C.UTF-8' > "$ROOTFS_DIR/etc/locale.conf"
 echo 'KEYMAP=us' > "$ROOTFS_DIR/etc/vconsole.conf"
 
 echo "### Generating initramfs..."
-if arch-chroot "$ROOTFS_DIR" sh -c 'command -v dracut >/dev/null'; then
-    mkdir -p "$ROOTFS_DIR/etc/dracut.conf.d"
-    cat > "$ROOTFS_DIR/etc/dracut.conf.d/pipa.conf" <<EOF
-i18n_vars="/etc/locale.conf /etc/vconsole.conf"
-EOF
-    arch-chroot "$ROOTFS_DIR" dracut --force --kver "$KERNEL_VER" "/boot/initramfs-$KERNEL_VER.img"
-elif arch-chroot "$ROOTFS_DIR" sh -c 'command -v mkinitcpio >/dev/null'; then
-    arch-chroot "$ROOTFS_DIR" mkinitcpio -P
-else
-    echo "No supported initramfs generator found in target rootfs" >&2
+if ! arch-chroot "$ROOTFS_DIR" sh -c 'command -v dracut >/dev/null'; then
+    echo "dracut is required in the target rootfs but was not found" >&2
     exit 1
 fi
+mkdir -p "$ROOTFS_DIR/etc/dracut.conf.d"
+cat > "$ROOTFS_DIR/etc/dracut.conf.d/pipa.conf" <<EOF
+i18n_vars="/etc/locale.conf /etc/vconsole.conf"
+EOF
+arch-chroot "$ROOTFS_DIR" dracut --force --kver "$KERNEL_VER" "/boot/initramfs-$KERNEL_VER.img"
 
 INITRAMFS_IMAGE="$(first_existing_file \
     "$ROOTFS_DIR/boot/initramfs-$KERNEL_VER.img" \
@@ -1014,17 +1009,6 @@ GRUB_THEME_SOURCE="$(first_existing_dir \
     "$ROOTFS_DIR/boot/grub/themes/endeavouros" \
     || true \
 )"
-GRUB_THEME_TMP=""
-if [ -z "$GRUB_THEME_SOURCE" ]; then
-    GRUB_THEME_TMP="$(mktemp -d)"
-    wget -O "$GRUB_THEME_TMP/endeavouros-grub-theme.tar.gz" "$GRUB_THEME_ARCHIVE_URL"
-    tar -xzf "$GRUB_THEME_TMP/endeavouros-grub-theme.tar.gz" -C "$GRUB_THEME_TMP"
-    GRUB_THEME_SOURCE="$(first_existing_dir \
-        "$GRUB_THEME_TMP"/grub2-theme-endeavouros-*/EndeavourOS \
-        "$GRUB_THEME_TMP"/grub2-theme-endeavouros-*/endeavouros \
-        || true \
-    )"
-fi
 GRUB_THEME_NAME=""
 if [ -n "$GRUB_THEME_SOURCE" ]; then
     GRUB_THEME_NAME="$(basename "$GRUB_THEME_SOURCE")"
@@ -1032,9 +1016,6 @@ if [ -n "$GRUB_THEME_SOURCE" ]; then
     cp -r "$GRUB_THEME_SOURCE" "$BOOT_MNT/grub2/themes/"
 else
     write_grub_splash_png "$BOOT_MNT/grub2/themes/endeavour/background.png"
-fi
-if [ -n "$GRUB_THEME_TMP" ]; then
-    rm -rf "$GRUB_THEME_TMP"
 fi
 cat > "$BOOT_MNT/grub2/grub.cfg" <<EOF
 set default=1
@@ -1044,7 +1025,6 @@ search --no-floppy --label --set=boot $BOOT_LABEL
 set root=(\$boot)
 
 if loadfont unicode; then
-    set gfxmode=$GRUB_GFXMODE
     set gfxpayload=keep
     terminal_output gfxterm
 fi
@@ -1159,13 +1139,38 @@ echo "### Writing fastboot helper script..."
 cat > "$IMAGE_DIR/$IMAGE_NAME/flash.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+
+announce() {
+    printf '### %s\n' "$1"
+}
+
+announce "Xiaomi Pad 6 single-boot flasher"
+announce "This mode flashes EndeavourOS rootfs to userdata."
+announce "Android userdata will be overwritten."
+echo
+
+announce "Verifying connected device"
 fastboot getvar product 2>&1 | grep pipa
+
+announce "Erasing dtbo_ab"
 fastboot erase dtbo_ab
+
+announce "Flashing vbmeta_ab"
 fastboot flash vbmeta_ab vbmeta-disabled.img
+
+announce "Flashing Mu-Silicium boot image to boot_ab"
 fastboot flash boot_ab silicium.img
+
+announce "Flashing EndeavourOS EFI image to rawdump"
 fastboot flash rawdump endeavouros_esp.raw
+
+announce "Flashing EndeavourOS boot image to cust"
 fastboot flash cust endeavouros_boot.raw
-fastboot flash linux endeavouros_rootfs.raw
+
+announce "Flashing EndeavourOS rootfs image to userdata"
+fastboot flash userdata endeavouros_rootfs.raw
+
+announce "Rebooting device"
 fastboot reboot
 EOF
 chmod +x "$IMAGE_DIR/$IMAGE_NAME/flash.sh"
@@ -1174,6 +1179,10 @@ echo "### Writing multiboot flash helper script..."
 cat > "$IMAGE_DIR/$IMAGE_NAME/flash-multiboot.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+
+announce() {
+    printf '### %s\n' "$1"
+}
 
 choose_from_menu() {
     local prompt="$1"
@@ -1214,8 +1223,10 @@ prompt_with_default() {
     printf '%s\n' "$value"
 }
 
-echo "### Xiaomi Pad 6 multiboot flasher"
-echo "### Press Enter to accept the default shown in brackets."
+announce "Xiaomi Pad 6 multiboot flasher"
+announce "This mode flashes EndeavourOS rootfs to a dedicated partition such as linux."
+announce "It does not use userdata unless you explicitly choose that partition."
+announce "Press Enter to accept the default shown in brackets."
 echo
 
 BOOT_SLOT_TARGET="${BOOT_SLOT_TARGET:-}"
@@ -1232,7 +1243,7 @@ if [ -z "$BOOT_SLOT_TARGET" ]; then
 fi
 
 if [ -z "$ROOTFS_PARTITION" ]; then
-    ROOTFS_PARTITION="$(prompt_with_default 'Root filesystem partition name' 'linux')"
+    ROOTFS_PARTITION="$(prompt_with_default 'Dedicated root filesystem partition name' 'linux')"
 fi
 
 if [ -z "$ERASE_DTBO" ]; then
@@ -1262,19 +1273,26 @@ case "$ERASE_DTBO" in
         ;;
 esac
 
+if [[ ! "$ROOTFS_PARTITION" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    echo "Invalid root filesystem partition name: $ROOTFS_PARTITION" >&2
+    exit 1
+fi
+
+announce "Verifying connected device"
 fastboot getvar product 2>&1 | grep pipa
 
 if [ "$ERASE_DTBO" = "yes" ]; then
+    announce "Erasing dtbo_ab"
     fastboot erase dtbo_ab
 fi
 
-echo "### Flash plan"
-echo "vbmeta      -> vbmeta_ab"
-echo "boot image  -> $BOOT_SLOT_TARGET"
-echo "esp image   -> $ESP_PARTITION"
-echo "boot image  -> $BOOT_PARTITION"
-echo "rootfs      -> $ROOTFS_PARTITION"
-echo "erase dtbo  -> $ERASE_DTBO"
+announce "Flash plan"
+echo "vbmeta image          -> vbmeta_ab"
+echo "Mu-Silicium boot      -> $BOOT_SLOT_TARGET"
+echo "EndeavourOS EFI image -> $ESP_PARTITION"
+echo "EndeavourOS boot      -> $BOOT_PARTITION"
+echo "EndeavourOS rootfs    -> $ROOTFS_PARTITION"
+echo "Erase dtbo_ab         -> $ERASE_DTBO"
 echo
 
 read -r -p "Proceed with flashing? [Y/n]: " CONFIRM_FLASH
@@ -1287,11 +1305,22 @@ case "${CONFIRM_FLASH:-Y}" in
         ;;
 esac
 
+announce "Flashing vbmeta_ab"
 fastboot flash vbmeta_ab vbmeta-disabled.img
+
+announce "Flashing Mu-Silicium boot image to $BOOT_SLOT_TARGET"
 fastboot flash "$BOOT_SLOT_TARGET" silicium.img
+
+announce "Flashing EndeavourOS EFI image to $ESP_PARTITION"
 fastboot flash "$ESP_PARTITION" endeavouros_esp.raw
+
+announce "Flashing EndeavourOS boot image to $BOOT_PARTITION"
 fastboot flash "$BOOT_PARTITION" endeavouros_boot.raw
+
+announce "Flashing EndeavourOS rootfs image to $ROOTFS_PARTITION"
 fastboot flash "$ROOTFS_PARTITION" endeavouros_rootfs.raw
+
+announce "Rebooting device"
 fastboot reboot
 EOF
 chmod +x "$IMAGE_DIR/$IMAGE_NAME/flash-multiboot.sh"
