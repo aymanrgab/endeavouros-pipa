@@ -124,6 +124,16 @@ assert_required_rootfs_files() {
     done
 }
 
+assert_required_rootfs_libssc() {
+    if ! first_existing_file \
+        "$ROOTFS_DIR/usr/lib/libssc.so.0" \
+        "$ROOTFS_DIR/usr/lib/libssc.so.2" \
+        >/dev/null; then
+        echo "Missing libssc shared library in target rootfs (expected libssc.so.0 or libssc.so.2)" >&2
+        exit 1
+    fi
+}
+
 write_placeholder_initramfs() {
     local initramfs_path="$1"
 
@@ -263,8 +273,8 @@ assert_required_rootfs_files \
     "usr/lib/systemd/system/pipa-audio-init.service"
 if [ "$PIPA_INCLUDE_SENSORS" = "1" ]; then
     echo "### Validating repo-provided Pipa sensor configuration..."
+    assert_required_rootfs_libssc
     assert_required_rootfs_files \
-        "usr/lib/libssc.so.0" \
         "usr/lib/udev/rules.d/81-libssc-xiaomi-pipa.rules" \
         "usr/local/bin/pipa-prepare-sensor-persist" \
         "usr/share/hexagonrpcd/hexagonrpcd-sdsp.conf" \
