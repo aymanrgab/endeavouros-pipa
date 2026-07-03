@@ -1,6 +1,25 @@
 #!/bin/bash
 set -euo pipefail
 
+usage() {
+    cat <<'EOF'
+Usage: build-image.sh [plasma|gnome]
+
+Build an EndeavourOS image for Xiaomi Pad 6 (Pipa).
+
+Environment variables:
+  PIPA_REPO_URL          Pacman repo URL (default: thespider2 pipa-pkgs)
+  PIPA_REPO_NAME         Pacman repo section name (default: pipa-pkgs)
+  PIPA_INCLUDE_SENSORS   Include sensor packages (default: 1)
+  BUILD_GIT_REV          Git revision stamped into build metadata
+EOF
+}
+
+if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
+    usage
+    exit 0
+fi
+
 if [ "$(id -u)" -ne 0 ]; then
     echo "You must be root to run this script."
     exit 1
@@ -1050,6 +1069,29 @@ announce "Rebooting device"
 fastboot reboot
 EOF
 chmod +x "$IMAGE_DIR/$IMAGE_NAME/flash-multiboot.sh"
+
+echo "### Writing build metadata..."
+BUILD_GIT_REV="${BUILD_GIT_REV:-unknown}"
+cat > "$IMAGE_DIR/$IMAGE_NAME/BUILDINFO.txt" <<EOF
+EndeavourOS Pipa Image Build
+============================
+Desktop:        $DE_NAME
+Build date:     $DATE
+Git revision:   $BUILD_GIT_REV
+Kernel:         $KERNEL_VER
+Pipa repo:      $PIPA_REPO_URL
+Sensors:        $PIPA_INCLUDE_SENSORS
+Rootfs label:   $ROOTFS_LABEL
+Boot label:     $BOOT_LABEL
+ESP label:      $ESP_LABEL
+Silicium URL:   $SILICIUM_URL
+EOF
+
+echo "### Generating checksums..."
+(
+    cd "$IMAGE_DIR/$IMAGE_NAME"
+    sha256sum -- * | tee SHA256SUMS
+)
 
 echo "### Compressing image..."
 pushd "$IMAGE_DIR/$IMAGE_NAME" > /dev/null
