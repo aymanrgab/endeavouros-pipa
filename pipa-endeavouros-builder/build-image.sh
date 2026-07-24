@@ -68,7 +68,7 @@ PIPA_CORE_PACKAGES=(
 if [ "$PIPA_INCLUDE_SENSORS" = "1" ]; then
     PIPA_CORE_PACKAGES+=(
         hexagonrpc
-        iio-sensor-proxy-pipa
+        iio-sensor-proxy
         libssc
         pipa-sensors
     )
@@ -204,21 +204,19 @@ BASE_PACKAGES=(
     eos-bash-shared eos-hooks eos-rankmirrors eos-translations eos-update eos-update-notifier welcome
 )
 
-# Install the published Pipa packages directly from the hosted repo.
-# `pipa-metapkg` is included so the image carries the umbrella tablet package,
-# while the explicit core list keeps the current builder selection unchanged.
-PIPA_REPO_PACKAGES=(
+# Optional extras previously mirrored from upstream pipa-alarm. That host is
+# offline and these packages are not in the published pipa-pkgs repo, so do not
+# require them at pacstrap time. Install any that are present after bootstrap.
+PIPA_OPTIONAL_REPO_PACKAGES=(
     box64
     gamescope
     mangohud-git
     mkbootimg-pipa
-    swclock-offset
     widevine
     wine-aarch64
 )
 mapfile -t QUALIFIED_PIPA_META_PACKAGES < <(qualify_repo_targets "${PIPA_META_PACKAGES[@]}")
 mapfile -t QUALIFIED_PIPA_CORE_PACKAGES < <(qualify_repo_targets "${PIPA_CORE_PACKAGES[@]}")
-mapfile -t QUALIFIED_PIPA_REPO_PACKAGES < <(qualify_repo_targets "${PIPA_REPO_PACKAGES[@]}")
 
 case "$DE_NAME" in
     plasma)
@@ -256,7 +254,20 @@ printf '%s\n' "$TARGET_KERNEL_CMDLINE" > "$ROOTFS_DIR/boot/cmdline.txt"
 write_placeholder_initramfs "$ROOTFS_DIR/boot/initramfs.img"
 
 echo "### Bootstrapping rootfs with pacstrap..."
-pacstrap -C "$PACMAN_CONF" -KGM "$ROOTFS_DIR" "${BASE_PACKAGES[@]}" "${QUALIFIED_PIPA_META_PACKAGES[@]}" "${QUALIFIED_PIPA_CORE_PACKAGES[@]}" "${QUALIFIED_PIPA_REPO_PACKAGES[@]}" "${DESKTOP_PACKAGES[@]}"
+pacstrap -C "$PACMAN_CONF" -KGM "$ROOTFS_DIR" "${BASE_PACKAGES[@]}" "${QUALIFIED_PIPA_META_PACKAGES[@]}" "${QUALIFIED_PIPA_CORE_PACKAGES[@]}" "${DESKTOP_PACKAGES[@]}"
+
+echo "### Installing optional Pipa extras when available in the repo..."
+OPTIONAL_INSTALL=()
+for pkg in "${PIPA_OPTIONAL_REPO_PACKAGES[@]}"; do
+    if pacman -C "$PACMAN_CONF" -Si "${PIPA_REPO_NAME}/${pkg}" >/dev/null 2>&1; then
+        OPTIONAL_INSTALL+=("${PIPA_REPO_NAME}/${pkg}")
+    else
+        echo "Skipping optional package (not in repo): $pkg"
+    fi
+done
+if [ "${#OPTIONAL_INSTALL[@]}" -gt 0 ]; then
+    pacman -C "$PACMAN_CONF" -Sy --noconfirm --needed -r "$ROOTFS_DIR" "${OPTIONAL_INSTALL[@]}"
+fi
 
 echo "### Writing target pacman configuration..."
 cp "$PACMAN_CONF" "$ROOTFS_DIR/etc/pacman.conf"
