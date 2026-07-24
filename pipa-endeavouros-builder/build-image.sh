@@ -39,7 +39,7 @@ ESP_LABEL="EOSPIPAESP"
 TARGET_KERNEL_CMDLINE="root=LABEL=$ROOTFS_LABEL rw rootwait boot=LABEL=$BOOT_LABEL console=tty0 console=ttyS0 earlycon quiet splash"
 PACMAN_CONF="$(pwd)/pacman-pipa.conf"
 EFI_TEMPLATE_DIR="$(pwd)/efi-template"
-VBMETA_DISABLED_IMG="$(pwd)/vbmeta-disabled.img"
+VBMETA_IMG="$(pwd)/vbmeta.img"
 PIPA_REPO_URL="${PIPA_REPO_URL:-https://thespider2.github.io/pipa-pkgs/repo/}"
 SILICIUM_URL="https://github.com/onesaladleaf/Mu-Silicium/releases/download/v3.5-pocketblue/Mu-pipa.img"
 SILICIUM_SHA256="ea3e1e123beea7ee5394295bdfee75054711d4734e9403831fda7f037fc900b6"
@@ -168,8 +168,8 @@ if [ ! -f "$EFI_TEMPLATE_DIR/EFI/BOOT/BOOTAA64.EFI" ] || [ ! -f "$EFI_TEMPLATE_D
     exit 1
 fi
 
-if [ ! -f "$VBMETA_DISABLED_IMG" ]; then
-    echo "Missing disabled vbmeta image: $VBMETA_DISABLED_IMG"
+if [ ! -f "$VBMETA_IMG" ]; then
+    echo "Missing vbmeta image: $VBMETA_IMG"
     exit 1
 fi
 
@@ -804,8 +804,8 @@ mount -o loop "$IMAGE_DIR/$IMAGE_NAME/endeavouros_rootfs.raw" "$IMAGE_MNT"
 rsync -aHAX --exclude '/tmp/*' --exclude '/boot/efi' --exclude '/efi' "$ROOTFS_DIR/" "$IMAGE_MNT/"
 umount "$IMAGE_MNT"
 
-echo "### Copying disabled vbmeta image..."
-cp "$VBMETA_DISABLED_IMG" "$IMAGE_DIR/$IMAGE_NAME/vbmeta-disabled.img"
+echo "### Copying vbmeta image..."
+cp "$VBMETA_IMG" "$IMAGE_DIR/$IMAGE_NAME/vbmeta.img"
 
 echo "### Writing fastboot helper script..."
 cat > "$IMAGE_DIR/$IMAGE_NAME/flash.sh" <<'EOF'
@@ -858,7 +858,7 @@ if [ -z "$ERASE_DTBO" ]; then
 fi
 
 if [ -z "$FLASH_VBMETA" ]; then
-    FLASH_VBMETA="$(choose_yes_no 'Flash disabled vbmeta to vbmeta_ab?' 'no')"
+    FLASH_VBMETA="$(choose_yes_no 'Flash vbmeta.img to vbmeta_ab?' 'no')"
 fi
 
 announce "Flash plan"
@@ -887,7 +887,7 @@ fi
 
 if [ "$FLASH_VBMETA" = "yes" ]; then
     announce "Flashing vbmeta_ab"
-    fastboot flash vbmeta_ab vbmeta-disabled.img
+    fastboot flash vbmeta_ab vbmeta.img
 fi
 
 announce "Flashing Mu-Silicium boot image to boot_ab"
@@ -986,7 +986,7 @@ if [ -z "$ERASE_DTBO" ]; then
 fi
 
 if [ -z "$FLASH_VBMETA" ]; then
-    FLASH_VBMETA="$(choose_from_menu 'Flash disabled vbmeta to vbmeta_ab?' 1 \
+    FLASH_VBMETA="$(choose_from_menu 'Flash vbmeta.img to vbmeta_ab?' 1 \
         'no' \
         'yes')"
 fi
@@ -1060,7 +1060,7 @@ esac
 
 if [ "$FLASH_VBMETA" = "yes" ]; then
     announce "Flashing vbmeta_ab"
-    fastboot flash vbmeta_ab vbmeta-disabled.img
+    fastboot flash vbmeta_ab vbmeta.img
 fi
 
 announce "Flashing Mu-Silicium boot image to $BOOT_SLOT_TARGET"

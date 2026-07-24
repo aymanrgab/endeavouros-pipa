@@ -69,7 +69,7 @@ The output ZIP file(s) will be placed in the `images/` directory. Each build arc
 - `endeavouros_esp.raw`: the EFI system partition image used by Mu-Silicium/UEFI
 - `endeavouros_boot.raw`: a dedicated ext4 `/boot` image containing GRUB payloads, kernel, initramfs, and DTB
 - `endeavouros_rootfs.raw`: the EndeavourOS root filesystem image mounted as `/`
-- `vbmeta-disabled.img`: optional disabled vbmeta image for verified-boot layouts
+- `vbmeta.img`: optional vbmeta image for verified-boot layouts
 - `flash.sh`: a helper script showing the expected fastboot flashing order
 - `flash-multiboot.sh`: an interactive helper with simple menus for choosing the boot slot and entering only the rootfs partition name
 - `BUILDINFO.txt`: build metadata (desktop, date, git revision, kernel version, repo URL)
