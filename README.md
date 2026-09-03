@@ -102,6 +102,11 @@ Default partition targets for `flash.sh`:
 The exact flashing sequence follows the same Mu-Silicium UEFI model used by pocketblue more closely than before by restoring a dedicated `cust`/`boot` partition for the kernel, initramfs, GRUB configuration, and device tree.
 If you need a different slot or rootfs target for multiboot testing, use `flash-multiboot.sh`; it offers menu-based selection for the boot slot and asks only for the rootfs partition name, while keeping the ESP and dedicated boot partitions on the default `rawdump` and `cust` targets.
 
+## First boot
+
+- **GNOME:** GDM runs `gnome-initial-setup` (create your user). Root password is `root` for SSH/recovery.
+- **Plasma:** root autologins once (`root` / `root`), shows a create-user dialog, then reboots to the normal login screen.
+
 ## Acknowledgements
 
 This port is heavily based on the excellent work done in the [pipa-fedora-builder-43](https://github.com/rr1111/pipa-fedora-builder-43/) and [pipa-fedora-support](https://github.com/timoxa0/pipa-fedora-support) repositories, as well as the EndeavourOS ARM [plasma-image](https://github.com/endeavouros-arm/plasma-image), [Mu-Silicium](https://github.com/onesaladleaf/Mu-Silicium), and [pocketblue](https://github.com/pocketblue/pocketblue) projects.

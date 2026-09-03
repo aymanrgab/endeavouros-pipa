@@ -36,7 +36,7 @@ IMAGE_NAME="endeavouros-pipa-${DE_NAME}-${DATE}"
 ROOTFS_LABEL="eos-pipa"
 BOOT_LABEL="boot"
 ESP_LABEL="EOSPIPAESP"
-TARGET_KERNEL_CMDLINE="root=LABEL=$ROOTFS_LABEL rw rootwait boot=LABEL=$BOOT_LABEL console=tty0 console=ttyS0 earlycon quiet splash"
+TARGET_KERNEL_CMDLINE="root=LABEL=$ROOTFS_LABEL rw rootwait boot=LABEL=$BOOT_LABEL console=tty0 quiet splash"
 PACMAN_CONF="$(pwd)/pacman-pipa.conf"
 EFI_TEMPLATE_DIR="$(pwd)/efi-template"
 VBMETA_IMG="$(pwd)/vbmeta.img"
@@ -198,6 +198,7 @@ BASE_PACKAGES=(
     upower modemmanager xdg-user-dirs
     iptables noto-fonts qt6-virtualkeyboard
     dracut
+    plymouth
     fish fastfetch zenity
     grub
     endeavouros-branding endeavouros-keyring endeavouros-mirrorlist endeavouros-theming
@@ -235,7 +236,7 @@ case "$DE_NAME" in
         DESKTOP_PACKAGES=(
             gnome-shell gnome-session gnome-control-center gnome-console
             nautilus eog evince file-roller gnome-text-editor gnome-tweaks
-            gdm xdg-desktop-portal-gnome
+            gdm gnome-initial-setup xdg-desktop-portal-gnome
             firefox flatpak
             eos-settings-gnome
         )
@@ -296,6 +297,50 @@ if [ "$PIPA_INCLUDE_SENSORS" = "1" ]; then
         "usr/lib/systemd/system/pipa-audio-init.service.d/10-sensors.conf"
 fi
 
+if [ "$DE_NAME" = "gnome" ]; then
+    echo "### Enabling GNOME Initial Setup..."
+    # GIS only runs when there are no local users with UID >= 1000.
+    if [ -f "$ROOTFS_DIR/etc/passwd" ]; then
+        while IFS=: read -r _pw_user _ _pw_uid _; do
+            case "$_pw_uid" in
+                ''|*[!0-9]*) continue ;;
+            esac
+            if [ "$_pw_uid" -ge 1000 ] && [ "$_pw_uid" -lt 65534 ]; then
+                echo "Removing pre-created user '$_pw_user' (uid $_pw_uid) so GNOME initial setup can run..."
+                arch-chroot "$ROOTFS_DIR" userdel -r "$_pw_user" 2>/dev/null || \
+                    arch-chroot "$ROOTFS_DIR" userdel "$_pw_user" 2>/dev/null || true
+            fi
+        done < "$ROOTFS_DIR/etc/passwd"
+    fi
+
+    install -d "$ROOTFS_DIR/var/lib/AccountsService/users"
+    cat > "$ROOTFS_DIR/var/lib/AccountsService/users/root" <<'EOF'
+[User]
+SystemAccount=true
+EOF
+
+    install -d "$ROOTFS_DIR/etc/gdm"
+    cat > "$ROOTFS_DIR/etc/gdm/custom.conf" <<'EOF'
+# GDM configuration storage
+
+[daemon]
+InitialSetupEnable=True
+#WaylandEnable=false
+
+[security]
+
+[xdmcp]
+
+[chooser]
+
+[debug]
+#Enable=true
+EOF
+    rm -f "$ROOTFS_DIR/etc/gdm/custom.conf.d/10-firstboot-autologin.conf"
+    rm -f "$ROOTFS_DIR/root/.config/autostart/pipa-firstboot-setup.desktop"
+    rm -f "$ROOTFS_DIR/usr/local/bin/pipa-firstboot-setup"
+    rm -f "$ROOTFS_DIR/var/lib/pipa-firstboot/needs-setup" "$ROOTFS_DIR/etc/pipa-firstboot-dm"
+else
 install -Dm755 /dev/stdin "$ROOTFS_DIR/usr/local/bin/pipa-firstboot-setup" <<'EOF'
 #!/bin/sh
 set -eu
@@ -497,7 +542,6 @@ prompt_info "Setup complete.\n\nUser '$username' was created, the hostname was s
 systemctl reboot
 EOF
 
-if [ "$DE_NAME" = "plasma" ]; then
     SESSION_FILE="$(first_existing_file \
         "$ROOTFS_DIR/usr/share/wayland-sessions/plasmawayland.desktop" \
         "$ROOTFS_DIR/usr/share/wayland-sessions/plasma.desktop" \
@@ -517,26 +561,10 @@ User=root
 Session=$SESSION_NAME
 Relogin=false
 EOF
-else
-    SESSION_FILE="$(first_existing_file \
-        "$ROOTFS_DIR/usr/share/xsessions/gnome.desktop" \
-        "$ROOTFS_DIR/usr/share/xsessions/gnome-xorg.desktop" \
-        "$ROOTFS_DIR/usr/share/wayland-sessions/gnome.desktop" \
-    )"
-    SESSION_NAME="$(basename "$SESSION_FILE" .desktop)"
-    FIRSTBOOT_DM="gdm"
 
-    install -Dm644 /dev/stdin "$ROOTFS_DIR/etc/gdm/custom.conf.d/10-firstboot-autologin.conf" <<EOF
-[daemon]
-AutomaticLoginEnable=True
-AutomaticLogin=root
-DefaultSession=$SESSION_NAME
-EOF
-fi
+    printf '%s\n' "$FIRSTBOOT_DM" > "$ROOTFS_DIR/etc/pipa-firstboot-dm"
 
-printf '%s\n' "$FIRSTBOOT_DM" > "$ROOTFS_DIR/etc/pipa-firstboot-dm"
-
-install -Dm644 /dev/stdin "$ROOTFS_DIR/root/.config/autostart/pipa-firstboot-setup.desktop" <<'EOF'
+    install -Dm644 /dev/stdin "$ROOTFS_DIR/root/.config/autostart/pipa-firstboot-setup.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=EndeavourOS Pipa First Boot Setup
@@ -544,8 +572,9 @@ Exec=sh -lc 'sleep 3; exec /usr/local/bin/pipa-firstboot-setup'
 NoDisplay=true
 EOF
 
-install -d "$ROOTFS_DIR/var/lib/pipa-firstboot"
-: > "$ROOTFS_DIR/var/lib/pipa-firstboot/needs-setup"
+    install -d "$ROOTFS_DIR/var/lib/pipa-firstboot"
+    : > "$ROOTFS_DIR/var/lib/pipa-firstboot/needs-setup"
+fi
 
 echo "### Validating critical firmware payloads..."
 assert_required_rootfs_files \
@@ -588,6 +617,21 @@ fi
 echo "### Preparing initramfs configuration..."
 echo 'LANG=C.UTF-8' > "$ROOTFS_DIR/etc/locale.conf"
 echo 'KEYMAP=us' > "$ROOTFS_DIR/etc/vconsole.conf"
+
+install -d "$ROOTFS_DIR/etc/dracut.conf.d" "$ROOTFS_DIR/etc/plymouth"
+cat > "$ROOTFS_DIR/etc/dracut.conf.d/99-plymouth.conf" <<'EOF'
+add_dracutmodules+=" plymouth "
+EOF
+if arch-chroot "$ROOTFS_DIR" command -v plymouth-set-default-theme >/dev/null 2>&1; then
+    arch-chroot "$ROOTFS_DIR" plymouth-set-default-theme spinner || true
+elif [ -d "$ROOTFS_DIR/usr/share/plymouth/themes/spinner" ]; then
+    cat > "$ROOTFS_DIR/etc/plymouth/plymouthd.conf" <<'EOF'
+[Daemon]
+Theme=spinner
+ShowDelay=0
+DeviceTimeout=8
+EOF
+fi
 
 echo "### Generating initramfs..."
 if ! arch-chroot "$ROOTFS_DIR" sh -c 'command -v dracut >/dev/null'; then
@@ -753,6 +797,12 @@ if [ ! -f "$ROOTFS_DIR/boot/grub2/grub.cfg" ]; then
 fi
 umount "$ROOTFS_DIR/boot"
 
+BOOT_FS_UUID="$(blkid -s UUID -o value "$IMAGE_DIR/$IMAGE_NAME/endeavouros_boot.raw")"
+if [ -z "$BOOT_FS_UUID" ]; then
+    echo "Unable to read UUID from endeavouros_boot.raw" >&2
+    exit 1
+fi
+
 echo "### Creating EFI system partition image..."
 truncate -s "${ESP_SIZE_MB}M" "$IMAGE_DIR/$IMAGE_NAME/endeavouros_esp.raw"
 mkfs.fat -F 16 -n "$ESP_LABEL" "$IMAGE_DIR/$IMAGE_NAME/endeavouros_esp.raw"
@@ -788,7 +838,7 @@ fi
 boot
 EOF
 cat > "$ESP_MNT/EFI/$shim_vendor/bootuuid.cfg" <<EOF
-set BOOT_UUID=""
+set BOOT_UUID="$BOOT_FS_UUID"
 EOF
 done
 write_uefi_csv \
